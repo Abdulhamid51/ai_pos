@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Yangi mahsulot · AI POS{% endblock %}
+
+{% block topbar_extra %}
+  <a class="btn" href="{% url 'product_list' %}">← Ro'yxatga qaytish</a>
+{% endblock %}
+
+{% block content %}
+<form method="post" enctype="multipart/form-data" novalidate id="productForm">
+  {% csrf_token %}
+
+  <div class="card" style="margin-bottom:16px">
+    <div class="card-head"><h2>Umumiy ma'lumotlar</h2>
+      <span class="sub">barcha rang variantlari uchun bir xil</span>
+    </div>
+    <div class="card-body">
+      {% if form.non_field_errors %}<div class="alert danger">{{ form.non_field_errors }}</div>{% endif %}
+      <div class="form-grid">
+        {% for f in form %}
+          {% if f.name in core_fields %}
+            <div class="field {% if f.name == 'name' %}span-2{% endif %}">
+              <label for="{{ f.id_for_label }}">
+                {{ f.label }}{% if f.field.required %}<span class="req" title="Majburiy maydon">*</span>{% endif %}
+              </label>
+              {{ f }}
+              {% if f.errors %}<div class="field-error">{{ f.errors|striptags }}</div>{% endif %}
+            </div>
+          {% endif %}
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <!-- Savdo turiga qarab ko'rinadigan maydonlar -->
+  <div class="card" style="margin-bottom:16px" id="tradeCard">
+    <div class="card-head"><h2>Qo'shimcha ma'lumotlar</h2>
+      <span class="sub" id="tradeHint">filialni tanlang</span>
+    </div>
+    <div class="card-body">
+      <div class="form-grid">
+        {% for f in form %}
+          {% if f.name not in core_fields %}
+            <div class="field trade-field {% if f.name == 'description' %}span-2{% endif %}"
+                 data-field="{{ f.name }}" hidden>
+              <label for="{{ f.id_for_label }}">
+                {{ f.label }}{% if f.field.required %}<span class="req">*</span>{% endif %}
+              </label>
+              {{ f }}
+              {% if f.errors %}<div class="field-error">{{ f.errors|striptags }}</div>{% endif %}
+            </div>
+          {% endif %}
+        {% endfor %}
+      </div>
+      <p class="muted" id="tradeEmpty">Filial tanlangach, savdo turiga mos maydonlar shu yerda chiqadi.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><h2>Rang variantlari</h2>
+      <span class="sub">har bir qatordan alohida mahsulot yaratiladi</span>
+    </div>
+    <div class="card-body">
+      {{ formset.management_form }}
+      {% if formset.non_form_errors %}<div class="alert danger">{{ formset.non_form_errors }}</div>{% endif %}
+
+      <div class="variant-head">
+        <span>Rasm</span><span>Rang</span><span>Kod</span><span>Shtrix-kod</span>
+        <span>Soni<span class="req" title="Majburiy maydon">*</span></span><span></span>
+      </div>
+
+      <div id="variantRows">
+        {% for vf in formset %}
+          <div class="variant-row">
+            <label class="image-cell">
+              <span class="image-preview" data-empty="Rasm">+</span>
+              {{ vf.image }}
+            </label>
+            <div>{{ vf.color }}{% if vf.color.errors %}<div class="field-error">{{ vf.color.errors|striptags }}</div>{% endif %}</div>
+            <div>{{ vf.color_hex }}</div>
+            <div>{{ vf.barcode }}{% if vf.barcode.errors %}<div class="field-error">{{ vf.barcode.errors|striptags }}</div>{% endif %}</div>
+            <div>{{ vf.quantity }}{% if vf.quantity.errors %}<div class="field-error">{{ vf.quantity.errors|striptags }}</div>{% endif %}</div>
+            <button type="button" class="icon-btn row-remove" title="Qatorni o'chirish" aria-label="Qatorni o'chirish">
+              <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2"
+                   stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button>
+          </div>
+        {% endfor %}
+      </div>
+
+      <button type="button" class="btn" id="addVariant" style="margin-top:12px">+ Rang qatori qo'shish</button>
+
+      <p class="muted" style="margin-top:10px">
+        Shtrix-kod bo'sh qoldirilsa, kompaniya sozlamalaridagi prefiks va uzunlik asosida avtomatik yaratiladi.
+      </p>
+
+      <div class="form-actions">
+        <a class="btn" href="{% url 'product_list' %}">Bekor qilish</a>
+        <button class="btn btn-primary" type="submit">Qo'shish</button>
+      </div>
+    </div>
+  </div>
+</form>
+
+<!-- Brauzer takliflari uchun mavjud ranglar -->
+<datalist id="color-options">
+  {% for c in colors %}<option value="{{ c.name }}" data-hex="{{ c.hex }}"></option>{% endfor %}
+</datalist>
+
+<template id="variantTemplate">
+  <div class="variant-row">
+    <label class="image-cell">
+      <span class="image-preview" data-empty="Rasm">+</span>
+      {{ formset.empty_form.image }}
+    </label>
+    <div>{{ formset.empty_form.color }}</div>
+    <div>{{ formset.empty_form.color_hex }}</div>
+    <div>{{ formset.empty_form.barcode }}</div>
+    <div>{{ formset.empty_form.quantity }}</div>
+    <button type="button" class="icon-btn row-remove" title="Qatorni o'chirish" aria-label="Qatorni o'chirish">
+      <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+    </button>
+  </div>
+</template>
+
+{{ branch_trades|json_script:"branch-trades" }}
+{{ trade_fields|json_script:"trade-fields" }}
+{% endblock %}
+
+{% block scripts %}
+<script src="{% static 'js/products.js' %}"></script>
+{% endblock %}

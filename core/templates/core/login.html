@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+
+{% block title %}Kirish · AI POS{% endblock %}
+
+{% block body %}
+<div class="auth-wrap">
+  <div class="auth-card">
+    <div class="brand">
+      <span class="brand-mark">AP</span>
+      <span class="brand-text" style="font-size:17px">AI POS</span>
+    </div>
+    <p class="hint">Tizimga kirish uchun ma'lumotlaringizni kiriting</p>
+
+    {% if form.errors %}
+      <div class="alert danger" style="margin-bottom:16px">Login yoki parol noto'g'ri.</div>
+    {% endif %}
+
+    <form method="post">
+      {% csrf_token %}
+      <div class="field">
+        <label for="{{ form.username.id_for_label }}">Login</label>
+        <input class="input" type="text" name="username" id="{{ form.username.id_for_label }}" autofocus required>
+      </div>
+      <div class="field">
+        <label for="{{ form.password.id_for_label }}">Parol</label>
+        <input class="input" type="password" name="password" id="{{ form.password.id_for_label }}" required>
+      </div>
+      <button class="btn btn-primary btn-block" type="submit" style="margin-top:8px">Kirish</button>
+      <input type="hidden" name="next" value="{{ next }}">
+    </form>
+  </div>
+</div>
+{% endblock %}

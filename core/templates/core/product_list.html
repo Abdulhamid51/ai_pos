@@ -1,0 +1,165 @@
+{% extends "base.html" %}
+{% load humanize static %}
+
+{% block title %}Mahsulotlar · AI POS{% endblock %}
+
+{% block topbar_extra %}
+  <span class="chip">{{ total }} ta mahsulot</span>
+  <a class="btn btn-primary" href="{% url 'product_create' %}">+ Yangi mahsulot</a>
+{% endblock %}
+
+{% block content %}
+
+<div class="card">
+  <div class="toolbar">
+    <form class="toolbar-filters" method="get">
+      <div class="search-box grow">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.2-3.2"/></svg>
+        <input type="search" name="q" value="{{ query }}" placeholder="Nomi, rangi, shtrix-kod yoki artikul">
+      </div>
+      <select class="input auto" name="branch" onchange="this.form.submit()">
+        <option value="">Barcha filiallar</option>
+        {% for b in branches %}
+          <option value="{{ b.pk }}" {% if branch_id == b.pk|stringformat:"s" %}selected{% endif %}>{{ b.name }}</option>
+        {% endfor %}
+      </select>
+      <button class="btn" type="submit">Qidirish</button>
+      {% if query or branch_id %}<a class="btn" href="{% url 'product_list' %}">Tozalash</a>{% endif %}
+    </form>
+
+    <div class="segmented" id="viewSwitch" role="group" aria-label="Ko'rinish">
+      <button type="button" data-view="table" aria-pressed="true" title="Jadval">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <path d="M3 6h18M3 12h18M3 18h18"/></svg>
+        Jadval
+      </button>
+      <button type="button" data-view="cards" aria-pressed="false" title="Kartochka">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/>
+          <rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+        Kartochka
+      </button>
+    </div>
+  </div>
+
+  {% if products %}
+
+    <!-- Jadval ko'rinishi -->
+    <div class="view-table" data-view-body="table">
+      <div class="table-wrap">
+        <table class="data">
+          <thead>
+            <tr>
+              <th style="width:52px"></th>
+              <th>Nomi</th>
+              <th>Rang</th>
+              <th>Shtrix-kod</th>
+              <th>Filial</th>
+              <th class="num">Narxi</th>
+              <th class="num">Qoldiq</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for p in products %}
+              <tr>
+                <td>
+                  {% if p.image %}
+                    <img class="thumb" src="{{ p.image.url }}" alt="{{ p.name }}">
+                  {% else %}
+                    <span class="thumb placeholder">{{ p.name|first }}</span>
+                  {% endif %}
+                </td>
+                <td>
+                  <div>{{ p.name }}</div>
+                  <div class="muted">{{ p.brand|default:p.sku }}</div>
+                </td>
+                <td>
+                  {% if p.color %}
+                    <span class="color-tag">
+                      <span class="swatch" style="background:{{ p.color.hex|default:'#94a3b8' }}"></span>{{ p.color.name }}
+                    </span>
+                  {% else %}<span class="muted">—</span>{% endif %}
+                </td>
+                <td>{% if p.barcode %}<code>{{ p.barcode }}</code>{% else %}<span class="muted">—</span>{% endif %}</td>
+                <td class="muted">{{ p.branch.name }}</td>
+                <td class="num">{{ p.price|floatformat:0|intcomma }} {{ currency }}</td>
+                <td class="num">
+                  <span class="stock {% if p.is_low_stock %}low{% endif %}">
+                    {{ p.quantity|floatformat:0 }} {{ p.get_unit_display }}
+                  </span>
+                </td>
+                <td class="num">
+                  <a class="btn btn-sm" href="/admin/core/product/{{ p.pk }}/change/">Tahrirlash</a>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Kartochka ko'rinishi -->
+    <div class="view-cards" data-view-body="cards" hidden>
+      <div class="product-grid">
+        {% for p in products %}
+          <article class="product-card">
+            <div class="product-image">
+              {% if p.image %}
+                <img src="{{ p.image.url }}" alt="{{ p.name }}">
+              {% else %}
+                <span class="no-image">Rasm yo'q</span>
+              {% endif %}
+              {% if p.is_low_stock %}<span class="badge low">Qoldiq kam</span>{% endif %}
+            </div>
+            <div class="product-body">
+              <div class="product-name">{{ p.name }}</div>
+              {% if p.color %}
+                <span class="color-tag">
+                  <span class="swatch" style="background:{{ p.color.hex|default:'#94a3b8' }}"></span>{{ p.color.name }}
+                </span>
+              {% endif %}
+              {% if p.brand %}<div class="muted">{{ p.brand }}</div>{% endif %}
+              <div class="product-meta">
+                <span class="price">{{ p.price|floatformat:0|intcomma }} {{ currency }}</span>
+                <span class="stock {% if p.is_low_stock %}low{% endif %}">
+                  {{ p.quantity|floatformat:0 }} {{ p.get_unit_display }}
+                </span>
+              </div>
+              <div class="muted">{{ p.branch.name }}</div>
+            </div>
+          </article>
+        {% endfor %}
+      </div>
+    </div>
+
+    {% if page_obj.has_other_pages %}
+      <div class="pagination">
+        {% if page_obj.has_previous %}
+          <a class="btn btn-sm" href="?{% if query %}q={{ query }}&{% endif %}{% if branch_id %}branch={{ branch_id }}&{% endif %}page={{ page_obj.previous_page_number }}">← Oldingi</a>
+        {% endif %}
+        <span class="muted">{{ page_obj.number }} / {{ page_obj.paginator.num_pages }}</span>
+        {% if page_obj.has_next %}
+          <a class="btn btn-sm" href="?{% if query %}q={{ query }}&{% endif %}{% if branch_id %}branch={{ branch_id }}&{% endif %}page={{ page_obj.next_page_number }}">Keyingi →</a>
+        {% endif %}
+      </div>
+    {% endif %}
+
+  {% else %}
+    <div class="empty">
+      <svg viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="currentColor" stroke-width="1.5"
+           stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 16V8l-9-5-9 5v8l9 5 9-5z"/><path d="M3.3 7.3 12 12l8.7-4.7"/><path d="M12 12v9"/>
+      </svg>
+      <p>{% if query or branch_id %}Shu shartlarga mos mahsulot topilmadi.{% else %}Hali mahsulot qo'shilmagan.{% endif %}</p>
+      <a class="btn btn-primary" href="{% url 'product_create' %}">Birinchi mahsulotni qo'shish</a>
+    </div>
+  {% endif %}
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script src="{% static 'js/products.js' %}"></script>
+{% endblock %}

@@ -1,0 +1,55 @@
+{% load static %}
+<!doctype html>
+<html lang="uz" data-trade="{{ trade_type|default:1 }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}AI POS{% endblock %}</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/tom-select@2.3.1/dist/css/tom-select.min.css">
+  <link rel="stylesheet" href="{% static 'css/style.css' %}">
+  <script>
+    // Sahifa chizilishidan oldin rejimni qo'llaymiz — "miltillash" bo'lmasligi uchun.
+    (function () {
+      try {
+        var t = localStorage.getItem('pos-theme') || 'system';
+        if (t !== 'system') document.documentElement.setAttribute('data-theme', t);
+        if (localStorage.getItem('pos-sidebar') === 'collapsed') {
+          document.documentElement.classList.add('pre-collapsed');
+        }
+      } catch (e) {}
+    })();
+  </script>
+  {% block head %}{% endblock %}
+</head>
+<body>
+{% block body %}
+<div class="layout">
+
+  {% include "partials/sidebar.html" %}
+
+  <div class="main">
+    <header class="topbar">
+      <h1>{% block page_title %}{{ page_title|default:"AI POS" }}{% endblock %}</h1>
+      <div class="spacer"></div>
+      {% block topbar_extra %}{% endblock %}
+    </header>
+
+    <main class="content">
+      {% if messages %}
+        {% for message in messages %}
+          <div class="alert {{ message.tags }}">{{ message }}</div>
+        {% endfor %}
+      {% endif %}
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+</div>
+
+{% include "partials/settings_modal.html" %}
+{% endblock %}
+
+<script src="https://cdn.jsdelivr.net/npm/tom-select@2.3.1/dist/js/tom-select.complete.min.js"></script>
+<script src="{% static 'js/app.js' %}"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,114 @@
+{% load static %}
+<aside class="sidebar">
+
+  <div class="sidebar-head">
+    <div class="brand">
+      <span class="brand-mark">AP</span>
+      <span class="brand-text">AI POS</span>
+    </div>
+    <button class="icon-btn sidebar-toggle" id="sidebarToggle" type="button"
+            title="Menyuni yig'ish / yoyish" aria-label="Menyuni yig'ish">
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="M15 9l-3 3 3 3"/>
+      </svg>
+    </button>
+  </div>
+
+  <nav class="nav">
+    <a class="nav-item {% if request.resolver_match.url_name == 'dashboard' %}active{% endif %}"
+       href="{% url 'dashboard' %}" title="Boshqaruv paneli">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/>
+        <rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/>
+      </svg>
+      <span>Boshqaruv paneli</span>
+    </a>
+
+    <div class="nav-label">Savdo</div>
+
+    <a class="nav-item" href="#" title="Kassa">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="9" cy="20" r="1.5"/><circle cx="18" cy="20" r="1.5"/>
+        <path d="M2 3h3l2.6 12.4a1 1 0 0 0 1 .8h8.8a1 1 0 0 0 1-.8L21 7H6"/>
+      </svg>
+      <span>Kassa</span>
+    </a>
+    <a class="nav-item" href="#" title="Sotuvlar tarixi">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M6 2h9l5 5v15H6z"/><path d="M15 2v5h5"/><path d="M9 12h7M9 16h7"/>
+      </svg>
+      <span>Sotuvlar</span>
+    </a>
+    <a class="nav-item" href="#" title="Mijozlar">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
+        <path d="M22 21v-2a4 4 0 0 0-3-3.9"/>
+      </svg>
+      <span>Mijozlar</span>
+    </a>
+
+    <div class="nav-label">Ombor</div>
+
+    <a class="nav-item {% if request.resolver_match.url_name|slice:":7" == "product" %}active{% endif %}"
+       href="{% url 'product_list' %}" title="Mahsulotlar">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 16V8l-9-5-9 5v8l9 5 9-5z"/><path d="M3.3 7.3 12 12l8.7-4.7"/><path d="M12 12v9"/>
+      </svg>
+      <span>Mahsulotlar</span>
+    </a>
+    <a class="nav-item" href="#" data-open-settings="branches" title="Filiallar">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M3 21h18"/><path d="M5 21V8l7-5 7 5v13"/><path d="M10 21v-6h4v6"/>
+      </svg>
+      <span>Filiallar</span>
+    </a>
+
+    <div class="nav-label">Boshqaruv</div>
+
+    {% if can_manage %}
+    <a class="nav-item {% if request.resolver_match.url_name|slice:":5" == "staff" %}active{% endif %}"
+       href="{% url 'staff_list' %}" title="Xodimlar">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="2" y="7" width="20" height="14" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+      </svg>
+      <span>Xodimlar</span>
+    </a>
+    {% endif %}
+    <a class="nav-item" href="#" title="Hisobotlar">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/>
+      </svg>
+      <span>Hisobotlar</span>
+    </a>
+  </nav>
+
+  <div class="sidebar-foot">
+    <div class="user-row" title="{{ user }}">
+      <span class="avatar">{{ user.username|first }}</span>
+      <div class="user-meta">
+        <div class="user-name">{{ user }}</div>
+        <div class="user-role">{{ user.get_role_display }}</div>
+      </div>
+    </div>
+
+    <div class="foot-actions">
+      <button class="icon-btn" id="settingsOpen" type="button" title="Sozlamalar" aria-label="Sozlamalar">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 9 19.4a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 4.6 9a1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/>
+        </svg>
+      </button>
+      <form method="post" action="{% url 'logout' %}" style="display:contents">
+        {% csrf_token %}
+        <button class="icon-btn" type="submit" title="Chiqish" aria-label="Chiqish">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/>
+          </svg>
+        </button>
+      </form>
+    </div>
+  </div>
+</aside>

@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+{% load humanize static %}
+
+{% block title %}Boshqaruv paneli · AI POS{% endblock %}
+
+{% block topbar_extra %}
+  <span class="chip">
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"
+         stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18"/><path d="M5 21V8l7-5 7 5v13"/></svg>
+    {{ store_name }}
+  </span>
+  <span class="chip">Namunaviy ma'lumot</span>
+{% endblock %}
+
+{% block content %}
+
+<section class="grid grid-kpi">
+  <div class="card kpi">
+    <div class="label">Bugungi tushum</div>
+    <div class="value">{{ kpi.revenue_today|intcomma }} <span class="unit">{{ currency }}</span></div>
+    <div class="delta {% if kpi.revenue_change >= 0 %}up{% else %}down{% endif %}">
+      {% if kpi.revenue_change >= 0 %}▲{% else %}▼{% endif %} {{ kpi.revenue_change }}% — kechagiga nisbatan
+    </div>
+  </div>
+  <div class="card kpi">
+    <div class="label">Bugungi foyda</div>
+    <div class="value">{{ kpi.profit_today|intcomma }} <span class="unit">{{ currency }}</span></div>
+    <div class="delta">Tushumning {{ kpi.margin_pct }}% qismi</div>
+  </div>
+  <div class="card kpi">
+    <div class="label">Cheklar soni</div>
+    <div class="value">{{ kpi.checks_today }} <span class="unit">ta</span></div>
+    <div class="delta">Bugun kassadan o'tgan</div>
+  </div>
+  <div class="card kpi">
+    <div class="label">O'rtacha chek</div>
+    <div class="value">{{ kpi.avg_check|intcomma }} <span class="unit">{{ currency }}</span></div>
+    <div class="delta">Bitta xarid o'rtachasi</div>
+  </div>
+  <div class="card kpi">
+    <div class="label">Qoldiq kam mahsulot</div>
+    <div class="value">{{ kpi.low_stock }} <span class="unit">ta</span></div>
+    <div class="delta down">Minimal qoldiqdan past</div>
+  </div>
+</section>
+
+<section class="grid grid-2">
+  <div class="card">
+    <div class="card-head">
+      <h2>Sotuv dinamikasi</h2>
+      <span class="sub">so'nggi 14 kun · {{ currency }}</span>
+    </div>
+    <div class="card-body">
+      <div class="chart-box"><canvas id="salesChart"></canvas></div>
+
+      <details class="table-view">
+        <summary>Jadval ko'rinishi</summary>
+        <div class="wrap">
+          <table class="data">
+            <thead>
+              <tr><th>Sana</th><th class="num">Tushum</th><th class="num">Foyda</th></tr>
+            </thead>
+            <tbody>
+              {% for day, rev, prof in chart_rows %}
+                <tr><td>{{ day }}</td><td class="num">{{ rev|intcomma }}</td><td class="num">{{ prof|intcomma }}</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </details>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head">
+      <h2>To'lov turlari</h2>
+      <span class="sub">shu oy</span>
+    </div>
+    <div class="card-body">
+      <div class="chart-box sm"><canvas id="paymentsChart"></canvas></div>
+      <div class="legend">
+        {% for p in data.payments %}
+          <div class="legend-item">
+            <span class="legend-dot" data-series="{{ forloop.counter }}"></span>
+            {{ p.label }}
+            <span class="val">{{ p.value|intcomma }} {{ currency }}</span>
+          </div>
+        {% endfor %}
+        <div class="legend-item" style="border-top:1px solid var(--border);padding-top:9px">
+          <strong>Jami</strong>
+          <span class="val"><strong>{{ payments_total|intcomma }} {{ currency }}</strong></span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="grid grid-2b">
+  <div class="card">
+    <div class="card-head">
+      <h2>Soatlar bo'yicha sotuv</h2>
+      <span class="sub">bugun · {{ currency }}</span>
+    </div>
+    <div class="card-body">
+      <div class="chart-box sm"><canvas id="hourlyChart"></canvas></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head">
+      <h2>Eng ko'p sotilgan mahsulotlar</h2>
+      <span class="sub">shu hafta · dona</span>
+    </div>
+    <div class="card-body">
+      <div class="chart-box sm"><canvas id="topChart"></canvas></div>
+    </div>
+  </div>
+</section>
+
+{{ data|json_script:"dashboard-data" }}
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<script src="{% static 'js/dashboard.js' %}"></script>
+{% endblock %}
