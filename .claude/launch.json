@@ -4,8 +4,8 @@
     {
       "name": "ai_pos",
       "runtimeExecutable": "./venv/bin/python",
-      "runtimeArgs": ["manage.py", "runserver", "8765"],
-      "port": 8765
+      "runtimeArgs": ["manage.py", "runserver", "8090"],
+      "port": 8090
     }
   ]
 }

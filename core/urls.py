@@ -4,7 +4,12 @@ from django.urls import path
 from . import views
 
 urlpatterns = [
-    path("", views.dashboard, name="dashboard"),
+    # Bosh sahifa — AI yordamchi. Boshqaruv paneli /panel/ manzilida qoldi.
+    path("", views.chat, name="chat"),
+    path("suhbat/yuborish/", views.chat_send, name="chat_send"),
+    path("suhbat/yangi/", views.chat_reset, name="chat_reset"),
+
+    path("panel/", views.dashboard, name="dashboard"),
 
     path("kassa/", views.pos, name="pos"),
     path("kassa/qidiruv/", views.pos_search, name="pos_search"),

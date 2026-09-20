@@ -16,6 +16,14 @@
   </div>
 
   <nav class="nav">
+    <a class="nav-item {% if request.resolver_match.url_name|slice:":4" == "chat" %}active{% endif %}"
+       href="{% url 'chat' %}" title="AI yordamchi">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 11.5a8.4 8.4 0 0 1-9 8.4L3 21l1.1-4.3A8.4 8.4 0 1 1 21 11.5z"/>
+        <path d="M8.5 11h.01M12 11h.01M15.5 11h.01"/>
+      </svg>
+      <span>AI yordamchi</span>
+    </a>
     <a class="nav-item {% if request.resolver_match.url_name == 'dashboard' %}active{% endif %}"
        href="{% url 'dashboard' %}" title="Boshqaruv paneli">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

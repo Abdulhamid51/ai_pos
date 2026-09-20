@@ -131,7 +131,7 @@ AUTH_PASSWORD_VALIDATORS = [
 ]
 
 LOGIN_URL = "login"
-LOGIN_REDIRECT_URL = "dashboard"
+LOGIN_REDIRECT_URL = "chat"
 LOGOUT_REDIRECT_URL = "login"
 
 # Sessiya 12 soat — bir ish smenasiga yetadi.
@@ -226,4 +226,7 @@ POS_IMAGE_QUALITY = int(os.environ.get("POS_IMAGE_QUALITY", "85"))
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
-GEMINI_MODEL='gemini-3.1-flash-lite'
+GEMINI_MODEL = os.environ.get('GEMINI_MODEL', 'gemini-3.1-flash-lite')
+# Semantik qidiruv uchun vektor modeli va vektor o'lchami.
+GEMINI_EMBED_MODEL = os.environ.get('GEMINI_EMBED_MODEL', 'gemini-embedding-2')
+GEMINI_EMBED_DIM = 768

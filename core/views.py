@@ -15,7 +15,7 @@ from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
-from . import reporting
+from . import ai, reporting
 from .forms import (
     BranchForm,
     BranchSwitchForm,
@@ -119,6 +119,69 @@ def dashboard(request):
         "recent_sales": all_sales.select_related("branch", "cashier", "customer")[:8],
         "has_data": all_sales.exists(),
     })
+
+
+# ---------------------------------------------------------------------------
+# AI yordamchi
+# ---------------------------------------------------------------------------
+
+# Suhbat tarixi Google tomonida saqlanadi — bizda faqat oxirgi javob id'si turadi.
+CHAT_SESSION_KEY = "ai_chat_id"
+
+
+@login_required
+@staff_required
+def chat(request):
+    """Bosh sahifa — AI yordamchi bilan suhbat."""
+    company = _company_of(request.user)
+    return render(request, "core/chat.html", {
+        "page_title": "AI yordamchi",
+        "store_name": company.name if company else settings.POS_STORE_NAME,
+        "branch": request.user.active_branch,
+        "model_name": settings.GEMINI_MODEL,
+        "ai_ready": ai.is_configured(),
+    })
+
+
+@login_required
+@staff_required
+@require_POST
+def chat_send(request):
+    """Savolni modelga uzatadi, javobni JSON ko'rinishida qaytaradi."""
+    try:
+        payload = json.loads(request.body or b"{}")
+    except ValueError:
+        return JsonResponse({"error": "So'rov formati noto'g'ri."}, status=400)
+
+    message = (payload.get("message") or "").strip()
+    if not message:
+        return JsonResponse({"error": "Xabar bo'sh."}, status=400)
+    if len(message) > 2000:
+        return JsonResponse({"error": "Xabar juda uzun — 2000 belgidan oshmasin."}, status=400)
+
+    try:
+        reply, interaction_id, sources, tables = ai.chat_reply(
+            message,
+            request.user,
+            previous_id=request.session.get(CHAT_SESSION_KEY),
+        )
+    except ai.AIError as error:
+        # 503: xizmat vaqtincha ishlamayapti. POS'ning qolgan qismi ishlayveradi.
+        return JsonResponse({"error": str(error)}, status=503)
+
+    request.session[CHAT_SESSION_KEY] = interaction_id
+    # `sources` — model qaysi ma'lumotdan foydalangani; `tables` — pandas
+    # tahlilining katta natijasi, u javob matnida emas, jadval bo'lib ko'rsatiladi.
+    return JsonResponse({"reply": reply, "sources": sources, "tables": tables})
+
+
+@login_required
+@staff_required
+@require_POST
+def chat_reset(request):
+    """Yangi suhbat — eski tarixga bog'lanish uziladi."""
+    request.session.pop(CHAT_SESSION_KEY, None)
+    return JsonResponse({"ok": True})
 
 
 # ---------------------------------------------------------------------------

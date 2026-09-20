@@ -700,3 +700,33 @@ def apply_stock(product, delta, kind, user=None, sale=None, note=""):
         product=product, kind=kind, quantity=delta,
         balance_after=product.quantity, sale=sale, user=user, note=note,
     )
+
+
+# ---------------------------------------------------------------------------
+# Semantik qidiruv
+# ---------------------------------------------------------------------------
+
+class ProductEmbedding(models.Model):
+    """Mahsulotning ma'noviy "barmoq izi" — semantik qidiruv uchun vektor.
+
+    Vektor Gemini embedding modelidan olinadi va oddiy JSON ro'yxat bo'lib
+    saqlanadi (SQLite'da alohida vektor bazasi kerak emas: bir necha ming
+    mahsulotgacha Python'da hisoblash yetarli tez).
+
+    `source_hash` — vektor olingan matnning nazorat summasi. Mahsulot nomi yoki
+    tavsifi o'zgarmagan bo'lsa, API qayta chaqirilmaydi.
+    """
+
+    product = models.OneToOneField(
+        Product, verbose_name="Mahsulot", on_delete=models.CASCADE, related_name="embedding"
+    )
+    vector = models.JSONField("Vektor", default=list)
+    source_hash = models.CharField("Matn nazorat summasi", max_length=64, db_index=True)
+    updated_at = models.DateTimeField("Yangilangan", auto_now=True)
+
+    class Meta:
+        verbose_name = "Mahsulot vektori"
+        verbose_name_plural = "Mahsulot vektorlari"
+
+    def __str__(self):
+        return f"{self.product} · {len(self.vector)} o'lcham"
