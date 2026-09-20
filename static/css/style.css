@@ -139,6 +139,9 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* `hidden` atributi har doim kuchga kirsin — .pos-sum kabi flex qoidalar uni bosib ketmasin. */
+[hidden] { display: none !important; }
+
 a { color: var(--brand); text-decoration: none; }
 a:hover { color: var(--brand-hover); }
 svg { flex: none; }
@@ -584,7 +587,8 @@ details.table-view .wrap { overflow-x: auto; margin-top: 6px; }
   .content, .topbar { padding-inline: 14px; }
   .modal { flex-direction: column; height: 92vh; }
   .modal-side { width: 100%; flex-direction: row; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--border); }
-  .modal-side .group-label, .search-box { display: none; }
+  /* Faqat sozlamalar modalidagi qidiruv yashiriladi — sahifalardagilari kerak. */
+  .modal-side .group-label, .modal-side .search-box { display: none; }
 }
 
 /* ===========================================================================
@@ -970,3 +974,240 @@ table.data th, table.data td { padding: 7px 10px; }
 }
 .ts-dropdown .active { background: var(--brand-soft); color: var(--text); }
 .ts-dropdown .no-results { padding: 8px 11px; color: var(--text-3); }
+
+/* ===========================================================================
+   Kassa
+   =========================================================================== */
+
+.pos-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 380px;
+  gap: 16px;
+  align-items: start;
+}
+
+.pos-catalog .toolbar { flex-wrap: wrap; }
+.pos-catalog .card-body { max-height: calc(100vh - 220px); overflow-y: auto; }
+
+.pos-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 10px;
+}
+
+.pos-item {
+  display: flex; flex-direction: column; gap: 6px;
+  text-align: left; cursor: pointer;
+  padding: 11px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  transition: border-color .12s, transform .12s, background .12s;
+}
+.pos-item:hover { border-color: var(--brand); background: var(--surface-3); transform: translateY(-1px); }
+.pos-item:active { transform: none; }
+.pos-item-name { font-weight: 550; line-height: 1.3; }
+.pos-item-foot { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-top: auto; }
+.pos-item-foot .price { font-weight: 600; font-variant-numeric: tabular-nums; }
+.pos-item-foot .stock { font-size: 12px; color: var(--text-3); }
+
+.pos-cart { position: sticky; top: 16px; display: flex; flex-direction: column; }
+.pos-cart-body { flex: 1; overflow-y: auto; max-height: 46vh; padding: 0 6px; }
+.pos-empty { padding: 36px 18px; }
+
+.cart-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 106px 84px 30px;
+  gap: 8px; align-items: center;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.cart-row:last-child { border-bottom: 0; }
+.cart-row.over-stock { background: color-mix(in srgb, var(--danger) 8%, transparent); }
+.cart-name { min-width: 0; font-size: 13px; line-height: 1.3; }
+.cart-name > div:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cart-total { text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; font-size: 13px; }
+
+.cart-row .qty { display: flex; align-items: center; gap: 2px; }
+.cart-row .qty .icon-btn {
+  width: 26px; height: 26px; flex: none;
+  color: var(--text-2); background: var(--surface-2);
+  border: 1px solid var(--border); border-radius: 6px;
+  font-size: 15px; line-height: 1;
+}
+.cart-row .qty .icon-btn:hover { background: var(--surface-3); color: var(--text); }
+.cart-row .qty input {
+  width: 48px; height: 26px; padding: 0 4px; text-align: center;
+  font-size: 12.5px; font-variant-numeric: tabular-nums;
+}
+.cart-row .qty input::-webkit-outer-spin-button,
+.cart-row .qty input::-webkit-inner-spin-button { appearance: none; margin: 0; }
+.cart-row .qty input { -moz-appearance: textfield; }
+
+.pos-cart-foot { border-top: 1px solid var(--border); padding: 14px 16px 16px; }
+.pos-sum {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 5px 0; font-size: 13px;
+}
+.pos-sum span:last-child { font-variant-numeric: tabular-nums; }
+.pos-sum.muted-row { color: var(--text-3); font-size: 12.5px; }
+.pos-sum.total {
+  border-top: 1px solid var(--border); margin-top: 6px; padding-top: 10px;
+  font-size: 17px; font-weight: 650;
+}
+.pos-sum .num-input { width: 128px; text-align: right; }
+
+.pos-payments { width: 100%; margin: 12px 0; display: grid; grid-template-columns: repeat(2, 1fr); }
+.pos-payments button { justify-content: center; }
+
+#changeHint { margin-top: 6px; font-variant-numeric: tabular-nums; }
+#changeHint.shortfall { color: var(--danger); }
+
+.pos-actions { display: grid; grid-template-columns: 1fr 2fr; gap: 10px; margin-top: 12px; }
+.pos-actions .btn { justify-content: center; }
+.pos-keys { margin: 10px 0 0; text-align: center; font-size: 11.5px; }
+
+.modal-compact { width: min(400px, 92vw); height: auto; position: relative; }
+.done-box { padding: 30px 26px 22px; text-align: center; }
+.done-box h2 { margin: 14px 0 2px; font-size: 18px; font-weight: 650; }
+.done-mark {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 48px; height: 48px; border-radius: 50%;
+  background: var(--good); color: #fff;
+}
+.done-meta { margin: 0; color: var(--text-3); font-size: 12.5px; }
+
+/* Summalar — kassir birinchi navbatda shularni o'qiydi. */
+.done-amounts {
+  margin: 18px 0 20px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.done-amount {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+  padding: 11px 14px; background: var(--surface-2); text-align: left;
+}
+.done-amount + .done-amount { border-top: 1px solid var(--border); }
+.done-amount > span { color: var(--text-2); font-size: 12.5px; }
+.done-amount > strong { font-size: 17px; font-variant-numeric: tabular-nums; }
+.done-amount.accent { background: color-mix(in srgb, var(--good) 12%, var(--surface-2)); }
+.done-amount.accent > strong { color: var(--good); font-size: 19px; }
+.done-amount.warn { background: color-mix(in srgb, var(--warning) 12%, var(--surface-2)); }
+.done-amount.warn > strong { color: var(--warning); }
+
+.done-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.done-actions .btn { justify-content: center; }
+.done-keys { margin: 12px 0 0; font-size: 11.5px; }
+
+@media (max-width: 1080px) {
+  .pos-layout { grid-template-columns: 1fr; }
+  .pos-cart { position: static; }
+  .pos-catalog .card-body { max-height: none; }
+}
+
+/* ===========================================================================
+   Sotuvlar, mijozlar va hisobotlar
+   =========================================================================== */
+
+.pay-tag {
+  display: inline-block; padding: 2px 8px; border-radius: 999px;
+  font-size: 11.5px; font-weight: 550;
+  border: 1px solid var(--border-strong); color: var(--text-2);
+}
+.pay-tag.pay-1 { border-color: var(--good); color: var(--good); }
+.pay-tag.pay-2 { border-color: var(--series-1); color: var(--series-1); }
+.pay-tag.pay-3 { border-color: var(--series-2); color: var(--series-2); }
+.pay-tag.pay-4 { border-color: var(--warning); color: var(--warning); }
+
+.status.warn { color: var(--warning); }
+
+.sum-list, .info-list { display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
+.sum-list > div, .info-list > div {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 16px;
+  padding: 6px 0;
+}
+.info-list > div + div { border-top: 1px solid var(--border); }
+.sum-list > div > span:first-child, .info-list > div > span:first-child { color: var(--text-2); }
+.sum-list > div > span:last-child { font-variant-numeric: tabular-nums; }
+.sum-list .total {
+  border-top: 1px solid var(--border); margin-top: 4px; padding-top: 10px;
+  font-size: 15px; font-weight: 650;
+}
+.sum-list .total > span:first-child { color: var(--text); }
+.sum-list .danger-row > span:last-child { color: var(--danger); }
+
+.returned-row > td { background: color-mix(in srgb, var(--warning) 8%, transparent); }
+
+.refund-rows { display: flex; flex-direction: column; gap: 4px; }
+.refund-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 13px;
+}
+.refund-row:last-child { border-bottom: 0; }
+.refund-row input { width: 92px; text-align: right; }
+
+table.data td.plus { color: var(--good); }
+table.data td.minus { color: var(--danger); }
+
+.btn-danger { border-color: var(--danger); color: var(--danger); }
+.btn-danger:hover { background: var(--danger); border-color: var(--danger); color: #fff; }
+
+/* Mahsulot kartochkasi endi havola — matn rangi meros qoladi. */
+a.product-card { color: inherit; text-decoration: none; display: block; }
+
+/* ===========================================================================
+   Chek (chop etish uchun)
+   =========================================================================== */
+
+.receipt-page {
+  min-height: 100vh; background: var(--bg);
+  display: flex; flex-direction: column; align-items: center;
+  gap: 18px; padding: 32px 16px;
+}
+.receipt {
+  width: 320px; padding: 20px 22px;
+  background: var(--surface); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  box-shadow: var(--shadow-md);
+  font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+  font-size: 12px; line-height: 1.5;
+}
+.receipt-head { text-align: center; }
+.receipt-store { font-size: 15px; font-weight: 700; margin-bottom: 4px; }
+.receipt-sep { border-top: 1px dashed var(--border-strong); margin: 10px 0; }
+.receipt-meta > div {
+  display: flex; justify-content: space-between; gap: 10px;
+}
+.receipt-meta > div > span:last-child { font-variant-numeric: tabular-nums; }
+.receipt-total {
+  border-top: 1px solid var(--text); border-bottom: 1px solid var(--text);
+  margin: 8px 0; padding: 6px 0; font-size: 14px; font-weight: 700;
+}
+.receipt-items { width: 100%; border-collapse: collapse; }
+.receipt-items td { padding: 1px 0; vertical-align: top; }
+.receipt-items .num { text-align: right; font-variant-numeric: tabular-nums; }
+.receipt-items .receipt-line td { padding-bottom: 6px; color: var(--text-2); }
+.receipt-foot { text-align: center; }
+.receipt-foot p { margin: 4px 0; }
+.receipt-code { letter-spacing: 2px; color: var(--text-3); }
+.receipt-actions { display: flex; gap: 10px; }
+
+@media print {
+  .receipt-page { padding: 0; background: #fff; min-height: 0; }
+  .receipt {
+    width: auto; max-width: 76mm; border: 0; box-shadow: none;
+    background: #fff; color: #000; padding: 0;
+  }
+  .receipt-actions, .sidebar, .topbar { display: none !important; }
+  .receipt-sep { border-color: #999; }
+  .receipt-total { border-color: #000; }
+}
+
+@media print {
+  /* Hisobotlarni qog'ozga chiqarishda faqat mazmun qolsin. */
+  .sidebar, .topbar, .toolbar, .pagination, .form-actions { display: none !important; }
+  .content { padding: 0; }
+  .card { box-shadow: none; border-color: #ccc; break-inside: avoid; }
+}

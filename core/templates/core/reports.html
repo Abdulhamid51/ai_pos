@@ -1,0 +1,212 @@
+{% extends "base.html" %}
+{% load humanize static %}
+
+{% block title %}Hisobotlar · AI POS{% endblock %}
+
+{% block topbar_extra %}
+  <span class="chip">{{ since|date:"d.m.Y" }} — {{ until|date:"d.m.Y" }}</span>
+  <button class="btn" type="button" onclick="window.print()">Chop etish</button>
+{% endblock %}
+
+{% block content %}
+
+<div class="card">
+  <div class="toolbar">
+    <form class="toolbar-filters" method="get">
+      <label class="muted" for="rep-dan">Davr</label>
+      <input class="input auto" type="date" id="rep-dan" name="dan" value="{{ since|date:'Y-m-d' }}">
+      <input class="input auto" type="date" name="gacha" value="{{ until|date:'Y-m-d' }}">
+      <select class="input auto" name="branch">
+        <option value="">Barcha filiallar</option>
+        {% for b in branches %}
+          <option value="{{ b.pk }}" {% if branch_id == b.pk|stringformat:"s" %}selected{% endif %}>{{ b.name }}</option>
+        {% endfor %}
+      </select>
+      <button class="btn btn-primary" type="submit">Ko'rsatish</button>
+      <a class="btn" href="{% url 'reports' %}">Oxirgi 30 kun</a>
+    </form>
+  </div>
+</div>
+
+<section class="grid grid-kpi">
+  <div class="card kpi">
+    <div class="label">Tushum</div>
+    <div class="value">{{ stats.revenue|floatformat:0|intcomma }} <span class="unit">{{ currency }}</span></div>
+    <div class="delta">{{ days }} kun · {{ stats.checks }} ta chek</div>
+  </div>
+  <div class="card kpi">
+    <div class="label">Foyda</div>
+    <div class="value">{{ stats.profit|floatformat:0|intcomma }} <span class="unit">{{ currency }}</span></div>
+    <div class="delta {% if stats.profit > 0 %}up{% endif %}">rentabellik {{ stats.margin_pct|floatformat:1 }}%</div>
+  </div>
+  <div class="card kpi">
+    <div class="label">Tan narxi</div>
+    <div class="value">{{ stats.cost|floatformat:0|intcomma }} <span class="unit">{{ currency }}</span></div>
+    <div class="delta">sotilgan tovarlar tannarxi</div>
+  </div>
+  <div class="card kpi">
+    <div class="label">O'rtacha chek</div>
+    <div class="value">{{ stats.avg_check|floatformat:0|intcomma }} <span class="unit">{{ currency }}</span></div>
+    <div class="delta">berilgan chegirma {{ stats.discount|floatformat:0|intcomma }}</div>
+  </div>
+  <div class="card kpi">
+    <div class="label">Qaytarilgan</div>
+    <div class="value">{{ stats.refunded|floatformat:0|intcomma }} <span class="unit">{{ currency }}</span></div>
+    <div class="delta {% if stats.refunded %}down{% endif %}">tushumdan chegirilgan</div>
+  </div>
+</section>
+
+<section class="grid grid-2">
+  <div class="card">
+    <div class="card-head">
+      <h2>Kunlik dinamika</h2>
+      <span class="sub">tushum va foyda · {{ currency }}</span>
+    </div>
+    <div class="card-body">
+      <div class="chart-box"><canvas id="salesChart"></canvas></div>
+      <details class="table-view">
+        <summary>Jadval ko'rinishi</summary>
+        <div class="wrap">
+          <table class="data">
+            <thead><tr><th>Sana</th><th class="num">Tushum</th><th class="num">Foyda</th></tr></thead>
+            <tbody>
+              {% for day, rev, prof in chart_rows %}
+                <tr><td>{{ day }}</td><td class="num">{{ rev|intcomma }}</td><td class="num">{{ prof|intcomma }}</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </details>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><h2>To'lov turlari</h2><span class="sub">tanlangan davr</span></div>
+    <div class="card-body">
+      {% if payments %}
+        <div class="chart-box sm"><canvas id="paymentsChart"></canvas></div>
+        <div class="legend">
+          {% for p in payments %}
+            <div class="legend-item">
+              <span class="legend-dot" data-series="{{ forloop.counter }}"></span>
+              {{ p.label }} <span class="muted">· {{ p.checks }} chek</span>
+              <span class="val">{{ p.value|intcomma }} {{ currency }}</span>
+            </div>
+          {% endfor %}
+          <div class="legend-item" style="border-top:1px solid var(--border);padding-top:9px">
+            <strong>Jami</strong>
+            <span class="val"><strong>{{ payments_total|intcomma }} {{ currency }}</strong></span>
+          </div>
+        </div>
+      {% else %}
+        <div class="empty"><p>Bu davrda sotuv bo'lmagan.</p></div>
+      {% endif %}
+    </div>
+  </div>
+</section>
+
+<section class="grid grid-2b">
+  <div class="card">
+    <div class="card-head"><h2>Eng ko'p sotilgan mahsulotlar</h2><span class="sub">soni bo'yicha</span></div>
+    <div class="table-wrap">
+      <table class="data">
+        <thead><tr><th>Mahsulot</th><th class="num">Soni</th><th class="num">Tushum</th><th class="num">Foyda</th></tr></thead>
+        <tbody>
+          {% for p in top_products %}
+            <tr>
+              <td>{{ p.name }}</td>
+              <td class="num">{{ p.qty|intcomma }}</td>
+              <td class="num">{{ p.total|intcomma }}</td>
+              <td class="num">{{ p.profit|intcomma }}</td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="4"><div class="empty"><p>Ma'lumot yo'q.</p></div></td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><h2>Kassirlar kesimi</h2><span class="sub">tushum bo'yicha</span></div>
+    <div class="table-wrap">
+      <table class="data">
+        <thead><tr><th>Xodim</th><th class="num">Chek</th><th class="num">Tushum</th><th class="num">O'rtacha</th></tr></thead>
+        <tbody>
+          {% for c in cashiers %}
+            <tr>
+              <td>{{ c.name }}</td>
+              <td class="num">{{ c.checks }}</td>
+              <td class="num">{{ c.revenue|intcomma }}</td>
+              <td class="num muted">{{ c.avg_check|intcomma }}</td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="4"><div class="empty"><p>Ma'lumot yo'q.</p></div></td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section class="grid grid-2b">
+  <div class="card">
+    <div class="card-head"><h2>Filiallar kesimi</h2></div>
+    <div class="table-wrap">
+      <table class="data">
+        <thead><tr><th>Filial</th><th class="num">Chek</th><th class="num">Tushum</th><th class="num">Foyda</th></tr></thead>
+        <tbody>
+          {% for b in branch_rows %}
+            <tr>
+              <td>{{ b.name }}</td>
+              <td class="num">{{ b.checks }}</td>
+              <td class="num">{{ b.revenue|intcomma }}</td>
+              <td class="num">{{ b.profit|intcomma }}</td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="4"><div class="empty"><p>Ma'lumot yo'q.</p></div></td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><h2>Diqqat talab qiladi</h2>
+      <span class="sub">qoldiq va muddat</span>
+    </div>
+    <div class="card-body">
+      <div class="info-list">
+        <div><span>Qoldig'i kam mahsulotlar</span><span><strong>{{ alerts.low_count }}</strong> ta</span></div>
+        <div><span>Muddati 30 kun ichida tugaydi</span><span><strong>{{ alerts.expiring_count }}</strong> ta</span></div>
+        <div><span>Mijozlardagi qarz</span><span><strong>{{ debt.total|floatformat:0|intcomma }}</strong> {{ currency }}</span></div>
+      </div>
+
+      {% if alerts.low %}
+        <div class="table-wrap" style="margin-top:12px">
+          <table class="data">
+            <thead><tr><th>Mahsulot</th><th>Filial</th><th class="num">Qoldiq</th><th class="num">Minimal</th></tr></thead>
+            <tbody>
+              {% for p in alerts.low|slice:":10" %}
+                <tr>
+                  <td><a href="{% url 'product_edit' p.pk %}">{{ p.name }}</a></td>
+                  <td class="muted">{{ p.branch.name }}</td>
+                  <td class="num"><span class="stock low">{{ p.quantity|floatformat:0 }}</span></td>
+                  <td class="num muted">{{ p.min_quantity|floatformat:0 }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+</section>
+
+{{ data|json_script:"dashboard-data" }}
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<script src="{% static 'js/dashboard.js' %}"></script>
+{% endblock %}

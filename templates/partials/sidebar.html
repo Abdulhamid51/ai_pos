@@ -27,20 +27,23 @@
 
     <div class="nav-label">Savdo</div>
 
-    <a class="nav-item" href="#" title="Kassa">
+    <a class="nav-item {% if request.resolver_match.url_name|slice:":3" == "pos" %}active{% endif %}"
+       href="{% url 'pos' %}" title="Kassa">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="9" cy="20" r="1.5"/><circle cx="18" cy="20" r="1.5"/>
         <path d="M2 3h3l2.6 12.4a1 1 0 0 0 1 .8h8.8a1 1 0 0 0 1-.8L21 7H6"/>
       </svg>
       <span>Kassa</span>
     </a>
-    <a class="nav-item" href="#" title="Sotuvlar tarixi">
+    <a class="nav-item {% if request.resolver_match.url_name|slice:":4" == "sale" %}active{% endif %}"
+       href="{% url 'sale_list' %}" title="Sotuvlar tarixi">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <path d="M6 2h9l5 5v15H6z"/><path d="M15 2v5h5"/><path d="M9 12h7M9 16h7"/>
       </svg>
       <span>Sotuvlar</span>
     </a>
-    <a class="nav-item" href="#" title="Mijozlar">
+    <a class="nav-item {% if request.resolver_match.url_name|slice:":8" == "customer" %}active{% endif %}"
+       href="{% url 'customer_list' %}" title="Mijozlar">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
         <path d="M22 21v-2a4 4 0 0 0-3-3.9"/>
@@ -75,7 +78,8 @@
       <span>Xodimlar</span>
     </a>
     {% endif %}
-    <a class="nav-item" href="#" title="Hisobotlar">
+    <a class="nav-item {% if request.resolver_match.url_name == "reports" %}active{% endif %}"
+       href="{% url 'reports' %}" title="Hisobotlar">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/>
       </svg>

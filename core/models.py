@@ -412,3 +412,291 @@ def generate_barcode(branch):
             return candidate
     # Juda kam ehtimol: bo'sh kod qaytaramiz, foydalanuvchi o'zi kiritadi.
     return ""
+
+
+# ---------------------------------------------------------------------------
+# Mijozlar
+# ---------------------------------------------------------------------------
+
+class Customer(models.Model):
+    """Doimiy xaridor: chegirmasi va qarzi yuritiladi."""
+
+    company = models.ForeignKey(
+        Company, verbose_name="Kompaniya", on_delete=models.CASCADE, related_name="customers"
+    )
+    full_name = models.CharField("F.I.Sh.", max_length=150)
+    phone = models.CharField("Telefon", max_length=20, blank=True, db_index=True)
+    address = models.CharField("Manzil", max_length=255, blank=True)
+    note = models.CharField("Izoh", max_length=255, blank=True)
+
+    discount_percent = models.DecimalField(
+        "Doimiy chegirma (%)", max_digits=5, decimal_places=2, default=Decimal("0"),
+        validators=[MinValueValidator(Decimal("0"))],
+        help_text="Kassada avtomatik qo'llanadi.",
+    )
+    debt = models.DecimalField(
+        "Qarz", max_digits=14, decimal_places=2, default=Decimal("0"),
+        help_text="Qarzga olingan tovarlar summasi. To'lov qilinganda kamayadi.",
+    )
+    debt_limit = models.DecimalField(
+        "Qarz chegarasi", max_digits=14, decimal_places=2, default=Decimal("0"),
+        help_text="0 bo'lsa cheklov yo'q.",
+    )
+
+    is_active = models.BooleanField("Faol", default=True)
+    created_at = models.DateTimeField("Yaratilgan", auto_now_add=True)
+    updated_at = models.DateTimeField("Yangilangan", auto_now=True)
+
+    class Meta:
+        verbose_name = "Mijoz"
+        verbose_name_plural = "Mijozlar"
+        ordering = ["full_name"]
+
+    def __str__(self):
+        return f"{self.full_name} · {self.phone}" if self.phone else self.full_name
+
+    @property
+    def has_debt(self):
+        return self.debt > 0
+
+    def debt_allows(self, amount):
+        """Shu summani qarzga olishga ruxsat bormi?"""
+        if not self.debt_limit:
+            return True
+        return self.debt + amount <= self.debt_limit
+
+
+class CustomerPayment(models.Model):
+    """Mijozning qarz uchun to'lovi."""
+
+    customer = models.ForeignKey(
+        Customer, verbose_name="Mijoz", on_delete=models.CASCADE, related_name="payments"
+    )
+    branch = models.ForeignKey(
+        Branch, verbose_name="Filial", on_delete=models.SET_NULL, null=True,
+        related_name="customer_payments",
+    )
+    user = models.ForeignKey(
+        "User", verbose_name="Qabul qilgan xodim", on_delete=models.SET_NULL, null=True,
+        related_name="accepted_payments",
+    )
+    amount = models.DecimalField(
+        "Summa", max_digits=14, decimal_places=2,
+        validators=[MinValueValidator(Decimal("0.01"))],
+    )
+    note = models.CharField("Izoh", max_length=255, blank=True)
+    created_at = models.DateTimeField("Sana", auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Qarz to'lovi"
+        verbose_name_plural = "Qarz to'lovlari"
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.customer.full_name} — {self.amount}"
+
+
+# ---------------------------------------------------------------------------
+# Savdo
+# ---------------------------------------------------------------------------
+
+class PaymentMethod(models.IntegerChoices):
+    NAQD = 1, "Naqd"
+    KARTA = 2, "Plastik karta"
+    OTKAZMA = 3, "O'tkazma"
+    QARZ = 4, "Qarzga"
+
+
+class Sale(models.Model):
+    """Kassadan o'tgan bitta chek."""
+
+    class Status(models.IntegerChoices):
+        TOLANGAN = 1, "To'langan"
+        QISMAN_QAYTARILGAN = 2, "Qisman qaytarilgan"
+        QAYTARILGAN = 3, "Qaytarilgan"
+
+    branch = models.ForeignKey(
+        Branch, verbose_name="Filial", on_delete=models.PROTECT, related_name="sales"
+    )
+    number = models.PositiveIntegerField("Chek raqami")
+    cashier = models.ForeignKey(
+        "User", verbose_name="Kassir", on_delete=models.SET_NULL, null=True, related_name="sales"
+    )
+    customer = models.ForeignKey(
+        Customer, verbose_name="Mijoz", on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="sales",
+    )
+
+    subtotal = models.DecimalField("Chegirmasiz summa", max_digits=14, decimal_places=2, default=Decimal("0"))
+    discount_amount = models.DecimalField("Chegirma", max_digits=14, decimal_places=2, default=Decimal("0"))
+    total = models.DecimalField("Jami", max_digits=14, decimal_places=2, default=Decimal("0"))
+    vat_amount = models.DecimalField(
+        "QQS", max_digits=14, decimal_places=2, default=Decimal("0"),
+        help_text="Jami summa ichidagi QQS ulushi.",
+    )
+    cost_total = models.DecimalField(
+        "Tan narxi jami", max_digits=14, decimal_places=2, default=Decimal("0"),
+        help_text="Foydani hisoblash uchun sotuv paytidagi tan narxlari yig'indisi.",
+    )
+
+    payment_method = models.PositiveSmallIntegerField(
+        "To'lov turi", choices=PaymentMethod.choices, default=PaymentMethod.NAQD
+    )
+    paid_amount = models.DecimalField("Berilgan pul", max_digits=14, decimal_places=2, default=Decimal("0"))
+    change_amount = models.DecimalField("Qaytim", max_digits=14, decimal_places=2, default=Decimal("0"))
+    refunded_amount = models.DecimalField("Qaytarilgan summa", max_digits=14, decimal_places=2, default=Decimal("0"))
+
+    status = models.PositiveSmallIntegerField("Holat", choices=Status.choices, default=Status.TOLANGAN)
+    note = models.CharField("Izoh", max_length=255, blank=True)
+    created_at = models.DateTimeField("Sana", auto_now_add=True, db_index=True)
+
+    class Meta:
+        verbose_name = "Sotuv"
+        verbose_name_plural = "Sotuvlar"
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(fields=["branch", "number"], name="unique_sale_number_per_branch")
+        ]
+
+    def __str__(self):
+        return f"№{self.number} — {self.branch.name}"
+
+    @property
+    def profit(self):
+        """Sof foyda: qaytarilgan qismdan keyingi summadan tan narxi ayiriladi."""
+        return self.net_total - self.net_cost
+
+    @property
+    def net_total(self):
+        return self.total - self.refunded_amount
+
+    @property
+    def net_cost(self):
+        return sum((item.net_cost for item in self.items.all()), Decimal("0"))
+
+    @property
+    def is_debt(self):
+        return self.payment_method == PaymentMethod.QARZ
+
+    @property
+    def item_count(self):
+        return self.items.count()
+
+    def recalc_status(self):
+        """Qaytarilgan miqdorlarga qarab holatni yangilaydi."""
+        items = list(self.items.all())
+        returned = sum(item.returned_quantity for item in items)
+        if not returned:
+            self.status = self.Status.TOLANGAN
+        elif all(item.returned_quantity >= item.quantity for item in items):
+            self.status = self.Status.QAYTARILGAN
+        else:
+            self.status = self.Status.QISMAN_QAYTARILGAN
+
+
+class SaleItem(models.Model):
+    """Chekdagi bitta qator. Mahsulot o'chirilsa ham chek o'qiladigan bo'lib qoladi."""
+
+    sale = models.ForeignKey(Sale, verbose_name="Chek", on_delete=models.CASCADE, related_name="items")
+    product = models.ForeignKey(
+        Product, verbose_name="Mahsulot", on_delete=models.SET_NULL,
+        null=True, related_name="sale_items",
+    )
+
+    # Sotuv paytidagi holat — keyin mahsulot o'zgarsa ham chek o'zgarmaydi.
+    name = models.CharField("Nomi", max_length=250)
+    barcode = models.CharField("Shtrix-kod", max_length=64, blank=True)
+    unit = models.CharField("O'lchov birligi", max_length=10, blank=True)
+
+    quantity = models.DecimalField("Soni", max_digits=12, decimal_places=3)
+    price = models.DecimalField("Narxi", max_digits=14, decimal_places=2)
+    cost_price = models.DecimalField("Tan narxi", max_digits=14, decimal_places=2, default=Decimal("0"))
+    discount_amount = models.DecimalField("Chegirma", max_digits=14, decimal_places=2, default=Decimal("0"))
+    returned_quantity = models.DecimalField("Qaytarilgan soni", max_digits=12, decimal_places=3, default=Decimal("0"))
+
+    class Meta:
+        verbose_name = "Chek qatori"
+        verbose_name_plural = "Chek qatorlari"
+        ordering = ["pk"]
+
+    def __str__(self):
+        return f"{self.name} × {self.quantity}"
+
+    @property
+    def gross_total(self):
+        return self.price * self.quantity
+
+    @property
+    def line_total(self):
+        return self.gross_total - self.discount_amount
+
+    @property
+    def returnable_quantity(self):
+        return self.quantity - self.returned_quantity
+
+    @property
+    def net_quantity(self):
+        return self.quantity - self.returned_quantity
+
+    @property
+    def net_cost(self):
+        return self.cost_price * self.net_quantity
+
+    @property
+    def unit_net_price(self):
+        """Chegirma hisobga olingan bitta dona narxi — qaytarishda ishlatiladi."""
+        if not self.quantity:
+            return Decimal("0")
+        return (self.line_total / self.quantity).quantize(Decimal("0.01"))
+
+
+class StockMovement(models.Model):
+    """Ombor harakati — qoldiq nega o'zgarganini ko'rsatadi."""
+
+    class Kind(models.IntegerChoices):
+        KIRIM = 1, "Kirim"
+        SOTUV = 2, "Sotuv"
+        QAYTARISH = 3, "Qaytarish"
+        TUZATISH = 4, "Tuzatish"
+        CHIQIM = 5, "Chiqim (yaroqsiz)"
+
+    product = models.ForeignKey(
+        Product, verbose_name="Mahsulot", on_delete=models.CASCADE, related_name="movements"
+    )
+    kind = models.PositiveSmallIntegerField("Turi", choices=Kind.choices)
+    quantity = models.DecimalField(
+        "O'zgarish", max_digits=12, decimal_places=3,
+        help_text="Musbat — qoldiq ortdi, manfiy — kamaydi.",
+    )
+    balance_after = models.DecimalField("Keyingi qoldiq", max_digits=12, decimal_places=3, default=Decimal("0"))
+    sale = models.ForeignKey(
+        Sale, verbose_name="Chek", on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="movements",
+    )
+    user = models.ForeignKey(
+        "User", verbose_name="Xodim", on_delete=models.SET_NULL, null=True, related_name="movements"
+    )
+    note = models.CharField("Izoh", max_length=255, blank=True)
+    created_at = models.DateTimeField("Sana", auto_now_add=True, db_index=True)
+
+    class Meta:
+        verbose_name = "Ombor harakati"
+        verbose_name_plural = "Ombor harakatlari"
+        ordering = ["-created_at", "-pk"]
+
+    def __str__(self):
+        return f"{self.get_kind_display()}: {self.product} {self.quantity:+}"
+
+
+def apply_stock(product, delta, kind, user=None, sale=None, note=""):
+    """Qoldiqni o'zgartiradi va harakatni jurnalga yozadi.
+
+    `delta` musbat bo'lsa qoldiq ortadi, manfiy bo'lsa kamayadi.
+    Mahsulot obyekti chaqiruvchida ham yangilangan holda qoladi.
+    """
+    product.quantity = (product.quantity or Decimal("0")) + delta
+    product.save(update_fields=["quantity", "updated_at"])
+    return StockMovement.objects.create(
+        product=product, kind=kind, quantity=delta,
+        balance_after=product.quantity, sale=sale, user=user, note=note,
+    )

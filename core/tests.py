@@ -1,17 +1,39 @@
 import io
+import json
 import random
 import shutil
 import tempfile
 from decimal import Decimal
 
 from django.conf import settings
+from django.contrib.humanize.templatetags.humanize import intcomma
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db.utils import IntegrityError
 from django.test import TestCase, override_settings
 from django.urls import reverse
 from PIL import Image
 
-from .models import Branch, Color, Company, Product, TradeType, User
+from .models import (
+    Branch,
+    Color,
+    Company,
+    Customer,
+    PaymentMethod,
+    Product,
+    Sale,
+    StockMovement,
+    TradeType,
+    User,
+)
+from .forms import (
+    CustomerForm,
+    CustomerPaymentForm,
+    ProductBaseForm,
+    ProductEditForm,
+    StockAdjustForm,
+    VariantForm,
+)
+from .services import CheckoutError, checkout, pay_debt, refund
 
 
 class BaseDataMixin:
@@ -368,6 +390,614 @@ class ThemeContextTests(BaseDataMixin, TestCase):
         response = self.client.get(reverse("dashboard"))
         self.assertEqual(response.context["trade_type"], TradeType.OZIQ_OVQAT)
         self.assertIn('data-trade="2"', response.content.decode())
+
+
+# ---------------------------------------------------------------------------
+# Kassa va savdo
+# ---------------------------------------------------------------------------
+
+class SalesMixin(BaseDataMixin):
+    """Sotuv testlari uchun umumiy mahsulotlar va yordamchi metodlar."""
+
+    def setUp(self):
+        self.cashier = self.make_cashier(branches=[self.branch])
+        self.non = Product.objects.create(
+            branch=self.branch, name="Non", barcode="1001",
+            cost_price=Decimal("2000"), price=Decimal("4000"), quantity=Decimal("50"),
+        )
+        self.sut = Product.objects.create(
+            branch=self.branch, name="Sut 1L", barcode="1002",
+            cost_price=Decimal("8000"), price=Decimal("12000"), quantity=Decimal("20"),
+        )
+        self.boshqa = Product.objects.create(
+            branch=self.food_branch, name="Shakar", barcode="2001",
+            cost_price=Decimal("9000"), price=Decimal("14000"), quantity=Decimal("30"),
+        )
+
+    #: `rows` berilmasa shu qator sotiladi (2 × 4000 = 8000 so'm).
+    DEFAULT_ROWS = object()
+
+    def sell(self, rows=DEFAULT_ROWS, **kwargs):
+        kwargs.setdefault("user", self.cashier)
+        kwargs.setdefault("branch", self.branch)
+        kwargs.setdefault("payment_method", PaymentMethod.KARTA)
+        if rows is self.DEFAULT_ROWS:
+            rows = [{"product": self.non.pk, "quantity": 2}]
+        return checkout(rows=rows, **kwargs)
+
+
+class CheckoutTests(SalesMixin, TestCase):
+    def test_sale_writes_items_and_reduces_stock(self):
+        sale = self.sell([
+            {"product": self.non.pk, "quantity": 3},
+            {"product": self.sut.pk, "quantity": 2},
+        ])
+        self.non.refresh_from_db()
+        self.sut.refresh_from_db()
+
+        self.assertEqual(sale.items.count(), 2)
+        self.assertEqual(sale.total, Decimal("36000"))          # 3×4000 + 2×12000
+        self.assertEqual(sale.cost_total, Decimal("22000"))     # 3×2000 + 2×8000
+        self.assertEqual(self.non.quantity, Decimal("47"))
+        self.assertEqual(self.sut.quantity, Decimal("18"))
+
+    def test_every_sale_is_logged_as_stock_movement(self):
+        sale = self.sell([{"product": self.non.pk, "quantity": 5}])
+        movement = StockMovement.objects.get(product=self.non, kind=StockMovement.Kind.SOTUV)
+        self.assertEqual(movement.quantity, Decimal("-5"))
+        self.assertEqual(movement.balance_after, Decimal("45"))
+        self.assertEqual(movement.sale, sale)
+
+    def test_check_numbers_grow_per_branch(self):
+        first = self.sell()
+        second = self.sell()
+        other = checkout(
+            user=self.make_director(), branch=self.food_branch,
+            rows=[{"product": self.boshqa.pk, "quantity": 1}],
+            payment_method=PaymentMethod.NAQD,
+        )
+        self.assertEqual([first.number, second.number, other.number], [1, 2, 1])
+
+    def test_same_product_twice_is_merged_into_one_row(self):
+        sale = self.sell([
+            {"product": self.non.pk, "quantity": 1},
+            {"product": self.non.pk, "quantity": 2},
+        ])
+        self.assertEqual(sale.items.count(), 1)
+        self.assertEqual(sale.items.get().quantity, Decimal("3"))
+
+    def test_cash_payment_returns_change(self):
+        sale = self.sell(payment_method=PaymentMethod.NAQD, paid_amount="10000")
+        self.assertEqual(sale.total, Decimal("8000"))
+        self.assertEqual(sale.change_amount, Decimal("2000"))
+
+    def test_cash_shortfall_is_rejected(self):
+        with self.assertRaises(CheckoutError):
+            self.sell(payment_method=PaymentMethod.NAQD, paid_amount="1000")
+        self.assertEqual(Sale.objects.count(), 0)
+
+    def test_stock_shortfall_is_rejected_and_nothing_is_saved(self):
+        with self.assertRaises(CheckoutError):
+            self.sell([{"product": self.non.pk, "quantity": 500}])
+
+        self.non.refresh_from_db()
+        self.assertEqual(self.non.quantity, Decimal("50"))
+        self.assertEqual(Sale.objects.count(), 0)
+
+    def test_negative_stock_is_allowed_when_company_permits(self):
+        self.company.allow_negative_stock = True
+        self.company.save(update_fields=["allow_negative_stock"])
+
+        self.sell([{"product": self.non.pk, "quantity": 60}])
+        self.non.refresh_from_db()
+        self.assertEqual(self.non.quantity, Decimal("-10"))
+
+    def test_product_of_another_branch_is_rejected(self):
+        with self.assertRaises(CheckoutError):
+            self.sell([{"product": self.boshqa.pk, "quantity": 1}])
+
+    def test_empty_cart_is_rejected(self):
+        with self.assertRaises(CheckoutError):
+            self.sell([])
+
+    def test_customer_without_sale_rights_cannot_sell(self):
+        mijoz = User.objects.create_user(
+            username="oddiy", password="parol12345", role=User.Role.MIJOZ, company=self.company
+        )
+        with self.assertRaises(CheckoutError):
+            self.sell(user=mijoz)
+
+    def test_discount_is_spread_across_rows(self):
+        sale = self.sell(
+            [{"product": self.non.pk, "quantity": 1}, {"product": self.sut.pk, "quantity": 1}],
+            discount_amount=Decimal("1600"),
+        )
+        self.assertEqual(sale.total, Decimal("14400"))          # 16000 − 1600
+        self.assertEqual(
+            sum(item.discount_amount for item in sale.items.all()), Decimal("1600")
+        )
+
+    def test_customer_discount_is_applied_automatically(self):
+        customer = Customer.objects.create(
+            company=self.company, full_name="Aziz", discount_percent=Decimal("10")
+        )
+        sale = self.sell([{"product": self.sut.pk, "quantity": 1}], customer=customer)
+        self.assertEqual(sale.discount_amount, Decimal("1200"))
+        self.assertEqual(sale.total, Decimal("10800"))
+
+    def test_discount_above_subtotal_is_rejected(self):
+        with self.assertRaises(CheckoutError):
+            self.sell([{"product": self.non.pk, "quantity": 1}], discount_amount=Decimal("99999"))
+
+    def test_vat_is_taken_out_of_the_total(self):
+        self.company.vat_percent = Decimal("12")
+        self.company.save(update_fields=["vat_percent"])
+
+        sale = self.sell([{"product": self.non.pk, "quantity": 1}])   # 4000
+        self.assertEqual(sale.total, Decimal("4000"))                 # QQS narx ichida
+        self.assertEqual(sale.vat_amount, Decimal("428.57"))          # 4000 × 12/112
+
+
+class DebtSaleTests(SalesMixin, TestCase):
+    def setUp(self):
+        super().setUp()
+        self.customer = Customer.objects.create(
+            company=self.company, full_name="Qarzdor Mijoz", phone="+998901112233"
+        )
+
+    def test_debt_sale_increases_customer_debt(self):
+        sale = self.sell(payment_method=PaymentMethod.QARZ, customer=self.customer)
+        self.customer.refresh_from_db()
+        self.assertEqual(self.customer.debt, sale.total)
+        self.assertEqual(sale.paid_amount, Decimal("0"))
+
+    def test_debt_sale_requires_a_customer(self):
+        with self.assertRaises(CheckoutError):
+            self.sell(payment_method=PaymentMethod.QARZ)
+
+    def test_debt_limit_is_respected(self):
+        self.customer.debt_limit = Decimal("5000")
+        self.customer.save(update_fields=["debt_limit"])
+        with self.assertRaises(CheckoutError):
+            self.sell([{"product": self.sut.pk, "quantity": 1}],
+                      payment_method=PaymentMethod.QARZ, customer=self.customer)
+
+    def test_payment_reduces_debt_and_is_recorded(self):
+        self.sell(payment_method=PaymentMethod.QARZ, customer=self.customer)
+        pay_debt(customer=self.customer, amount=Decimal("3000"), user=self.cashier)
+
+        self.customer.refresh_from_db()
+        self.assertEqual(self.customer.debt, Decimal("5000"))
+        self.assertEqual(self.customer.payments.get().amount, Decimal("3000"))
+
+    def test_payment_above_debt_is_rejected(self):
+        self.sell(payment_method=PaymentMethod.QARZ, customer=self.customer)
+        with self.assertRaises(CheckoutError):
+            pay_debt(customer=self.customer, amount=Decimal("100000"), user=self.cashier)
+
+
+class RefundTests(SalesMixin, TestCase):
+    def setUp(self):
+        super().setUp()
+        self.sale = self.sell([
+            {"product": self.non.pk, "quantity": 4},
+            {"product": self.sut.pk, "quantity": 2},
+        ])
+        self.non_item = self.sale.items.get(product=self.non)
+        self.sut_item = self.sale.items.get(product=self.sut)
+
+    def test_partial_refund_returns_stock_and_marks_status(self):
+        amount = refund(sale=self.sale, rows={self.non_item.pk: 2}, user=self.cashier)
+        self.non.refresh_from_db()
+        self.sale.refresh_from_db()
+
+        self.assertEqual(amount, Decimal("8000"))
+        self.assertEqual(self.non.quantity, Decimal("48"))      # 50 − 4 + 2
+        self.assertEqual(self.sale.status, Sale.Status.QISMAN_QAYTARILGAN)
+        self.assertEqual(self.sale.net_total, Decimal("32000"))
+
+    def test_full_refund_marks_sale_as_returned(self):
+        refund(sale=self.sale, rows={self.non_item.pk: 4, self.sut_item.pk: 2}, user=self.cashier)
+        self.sale.refresh_from_db()
+
+        self.assertEqual(self.sale.status, Sale.Status.QAYTARILGAN)
+        self.assertEqual(self.sale.refunded_amount, self.sale.total)
+        self.assertEqual(self.sale.net_total, Decimal("0"))
+
+    def test_refund_beyond_sold_quantity_is_rejected(self):
+        with self.assertRaises(CheckoutError):
+            refund(sale=self.sale, rows={self.non_item.pk: 10}, user=self.cashier)
+
+        self.non.refresh_from_db()
+        self.assertEqual(self.non.quantity, Decimal("46"))
+
+    def test_refund_is_logged_as_stock_movement(self):
+        refund(sale=self.sale, rows={self.non_item.pk: 1}, user=self.cashier)
+        movement = StockMovement.objects.get(kind=StockMovement.Kind.QAYTARISH)
+        self.assertEqual(movement.quantity, Decimal("1"))
+        self.assertEqual(movement.product, self.non)
+
+    def test_refund_of_discounted_row_uses_paid_price(self):
+        sale = self.sell([{"product": self.sut.pk, "quantity": 2}], discount_amount=Decimal("4000"))
+        item = sale.items.get()
+        amount = refund(sale=sale, rows={item.pk: 1}, user=self.cashier)
+        self.assertEqual(amount, Decimal("10000"))      # (24000 − 4000) / 2
+
+    def test_refund_of_debt_sale_reduces_debt(self):
+        customer = Customer.objects.create(company=self.company, full_name="Qarzdor")
+        sale = self.sell([{"product": self.sut.pk, "quantity": 2}],
+                         payment_method=PaymentMethod.QARZ, customer=customer)
+        item = sale.items.get()
+        refund(sale=sale, rows={item.pk: 1}, user=self.cashier)
+
+        customer.refresh_from_db()
+        self.assertEqual(customer.debt, Decimal("12000"))
+
+
+class AccessTests(SalesMixin, TestCase):
+    """Mijoz rolidagi foydalanuvchi ichki sahifalarni ko'rmasligi kerak."""
+
+    PAGES = ["dashboard", "product_list", "sale_list", "customer_list", "reports"]
+
+    def test_staff_sees_the_back_office(self):
+        self.client.force_login(self.cashier)
+        for name in self.PAGES:
+            with self.subTest(page=name):
+                self.assertEqual(self.client.get(reverse(name)).status_code, 200)
+
+    def test_customer_role_is_turned_away(self):
+        mijoz = User.objects.create_user(
+            username="xaridor", password="parol12345",
+            role=User.Role.MIJOZ, company=self.company,
+        )
+        self.client.force_login(mijoz)
+        for name in self.PAGES:
+            with self.subTest(page=name):
+                self.assertEqual(self.client.get(reverse(name)).status_code, 302)
+
+
+class PosViewTests(SalesMixin, TestCase):
+    def setUp(self):
+        super().setUp()
+        self.client.force_login(self.cashier)
+
+    def test_pos_page_opens_for_seller(self):
+        self.assertEqual(self.client.get(reverse("pos")).status_code, 200)
+
+    def test_pos_is_closed_for_customers(self):
+        mijoz = User.objects.create_user(
+            username="mijoz2", password="parol12345", role=User.Role.MIJOZ, company=self.company
+        )
+        self.client.force_login(mijoz)
+        self.assertEqual(self.client.get(reverse("pos")).status_code, 302)
+
+    def test_search_finds_product_by_name(self):
+        data = self.client.get(reverse("pos_search"), {"q": "sut"}).json()
+        self.assertEqual([r["name"] for r in data["results"]], ["Sut 1L"])
+
+    def test_exact_barcode_returns_single_result(self):
+        data = self.client.get(reverse("pos_search"), {"q": "1002"}).json()
+        self.assertTrue(data["exact"])
+        self.assertEqual(len(data["results"]), 1)
+
+    def test_search_does_not_leak_other_branches(self):
+        data = self.client.get(reverse("pos_search"), {"q": "Shakar"}).json()
+        self.assertEqual(data["results"], [])
+
+    def _checkout(self, payload):
+        return self.client.post(
+            reverse("pos_checkout"), data=json.dumps(payload), content_type="application/json"
+        )
+
+    def test_checkout_endpoint_creates_sale(self):
+        response = self._checkout({
+            "items": [{"product": self.non.pk, "quantity": 2}],
+            "payment_method": PaymentMethod.NAQD,
+            "paid_amount": "10000",
+        })
+        body = response.json()
+        self.assertTrue(body["ok"])
+        self.assertEqual(body["change"], 2000)
+        self.assertEqual(Sale.objects.count(), 1)
+
+    def test_checkout_answer_describes_the_sale(self):
+        """Yakunlangandan keyingi oyna shu maydonlardan to'ldiriladi."""
+        body = self._checkout({
+            "items": [{"product": self.non.pk, "quantity": 2}],
+            "payment_method": PaymentMethod.KARTA,
+        }).json()
+
+        self.assertEqual(body["number"], 1)
+        self.assertEqual(body["total"], 8000)
+        self.assertEqual(body["payment"], "Plastik karta")
+        self.assertEqual(body["customer"], "")
+        self.assertIsNone(body["debt"])          # qarz emas — qator ko'rsatilmaydi
+
+    def test_debt_checkout_answer_carries_the_new_debt(self):
+        customer = Customer.objects.create(company=self.company, full_name="Qarzdor Mijoz")
+        body = self._checkout({
+            "items": [{"product": self.non.pk, "quantity": 2}],
+            "payment_method": PaymentMethod.QARZ,
+            "customer": customer.pk,
+        }).json()
+
+        self.assertEqual(body["payment"], "Qarzga")
+        self.assertEqual(body["customer"], "Qarzdor Mijoz")
+        self.assertEqual(body["debt"], 8000)
+
+    def test_checkout_endpoint_reports_errors(self):
+        response = self._checkout({
+            "items": [{"product": self.non.pk, "quantity": 9999}],
+            "payment_method": PaymentMethod.KARTA,
+        })
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("qoldig'i", response.json()["error"])
+        self.assertEqual(Sale.objects.count(), 0)
+
+
+class SalePageTests(SalesMixin, TestCase):
+    def setUp(self):
+        super().setUp()
+        self.sale = self.sell()
+        self.client.force_login(self.cashier)
+
+    def test_sale_list_shows_the_check(self):
+        html = self.client.get(reverse("sale_list")).content.decode()
+        self.assertIn(f"№{self.sale.number}", html)
+
+    def test_sale_detail_and_receipt_open(self):
+        self.assertEqual(self.client.get(reverse("sale_detail", args=[self.sale.pk])).status_code, 200)
+        self.assertEqual(self.client.get(reverse("sale_receipt", args=[self.sale.pk])).status_code, 200)
+
+    def test_other_branch_sale_is_not_visible(self):
+        other = checkout(
+            user=self.make_director(), branch=self.food_branch,
+            rows=[{"product": self.boshqa.pk, "quantity": 1}],
+            payment_method=PaymentMethod.NAQD,
+        )
+        self.assertEqual(self.client.get(reverse("sale_detail", args=[other.pk])).status_code, 404)
+
+    def test_refund_through_the_page(self):
+        item = self.sale.items.get()
+        self.client.post(reverse("sale_refund", args=[self.sale.pk]),
+                         {f"qty-{item.pk}": "1", "note": "sifatsiz"})
+        self.sale.refresh_from_db()
+        self.assertEqual(self.sale.refunded_amount, Decimal("4000"))
+        self.assertIn("sifatsiz", self.sale.note)
+
+    def test_date_filter_narrows_the_list(self):
+        response = self.client.get(reverse("sale_list"), {"dan": "2000-01-01", "gacha": "2000-01-31"})
+        self.assertEqual(list(response.context["sales"]), [])
+
+
+# ---------------------------------------------------------------------------
+# Mijozlar
+# ---------------------------------------------------------------------------
+
+class CustomerViewTests(SalesMixin, TestCase):
+    def setUp(self):
+        super().setUp()
+        self.client.force_login(self.cashier)
+        self.customer = Customer.objects.create(
+            company=self.company, full_name="Dilshod Aliyev", phone="+998901234567"
+        )
+
+    def test_customer_is_created(self):
+        response = self.client.post(reverse("customer_create"), {
+            "full_name": "Yangi Mijoz", "phone": "+998907654321", "address": "Toshkent",
+            "discount_percent": "5", "debt_limit": "0", "note": "", "is_active": "on",
+        })
+        customer = Customer.objects.get(full_name="Yangi Mijoz")
+        self.assertRedirects(response, reverse("customer_detail", args=[customer.pk]))
+        self.assertEqual(customer.company, self.company)
+
+    def test_discount_above_hundred_is_rejected(self):
+        self.client.post(reverse("customer_create"), {
+            "full_name": "Xato", "discount_percent": "150", "debt_limit": "0", "is_active": "on",
+        })
+        self.assertFalse(Customer.objects.filter(full_name="Xato").exists())
+
+    def test_detail_page_shows_purchase_history(self):
+        self.sell(customer=self.customer)
+        html = self.client.get(reverse("customer_detail", args=[self.customer.pk])).content.decode()
+        self.assertIn("Dilshod Aliyev", html)
+        self.assertIn("№1", html)
+
+    def test_debt_payment_through_the_page(self):
+        self.sell(payment_method=PaymentMethod.QARZ, customer=self.customer)
+        response = self.client.post(reverse("customer_pay", args=[self.customer.pk]),
+                                    {"amount": "3000", "note": "qisman"}, follow=True)
+
+        self.customer.refresh_from_db()
+        self.assertEqual(self.customer.debt, Decimal("5000"))
+        # Xabardagi summa sahifadagi kabi ajratgich bilan chiqadi.
+        # Ajratgich belgisi tilga bog'liq, shuning uchun uni ham intcomma beradi.
+        self.assertContains(response, f"Qolgan qarz: {intcomma('5000')}")
+        self.assertNotContains(response, "Qolgan qarz: 5000")
+
+    def test_debt_filter_shows_only_debtors(self):
+        self.sell(payment_method=PaymentMethod.QARZ, customer=self.customer)
+        Customer.objects.create(company=self.company, full_name="Qarzsiz")
+
+        names = [c.full_name for c in
+                 self.client.get(reverse("customer_list"), {"qarz": "1"}).context["customers"]]
+        self.assertEqual(names, ["Dilshod Aliyev"])
+
+
+# ---------------------------------------------------------------------------
+# Ombor va hisobotlar
+# ---------------------------------------------------------------------------
+
+class StockAndProductEditTests(SalesMixin, TestCase):
+    def setUp(self):
+        super().setUp()
+        self.client.force_login(self.make_director())
+
+    def test_edit_page_saves_changes(self):
+        self.client.post(reverse("product_edit", args=[self.non.pk]), {
+            "branch": self.branch.pk, "name": "Non (bug'doy)", "sku": "", "unit": "dona",
+            "cost_price": "2500", "price": "4500", "min_quantity": "5",
+            "barcode": "1001", "color": "Oq", "color_hex": "#ffffff", "is_active": "on",
+        })
+        self.non.refresh_from_db()
+        self.assertEqual(self.non.name, "Non (bug'doy)")
+        self.assertEqual(self.non.price, Decimal("4500"))
+        self.assertEqual(self.non.color.name, "Oq")
+
+    def test_duplicate_barcode_is_rejected(self):
+        self.client.post(reverse("product_edit", args=[self.non.pk]), {
+            "branch": self.branch.pk, "name": "Non", "sku": "", "unit": "dona",
+            "cost_price": "2000", "price": "4000", "min_quantity": "0",
+            "barcode": "1002", "is_active": "on",      # Sut 1L kodini olmoqchi
+        })
+        self.non.refresh_from_db()
+        self.assertEqual(self.non.barcode, "1001")
+
+    def test_stock_intake_adds_quantity_and_logs_it(self):
+        self.client.post(reverse("product_edit", args=[self.non.pk]), {
+            "save_stock": "1", "kind": StockMovement.Kind.KIRIM,
+            "quantity": "20", "cost_price": "2200", "note": "ta'minotchidan",
+        })
+        self.non.refresh_from_db()
+        self.assertEqual(self.non.quantity, Decimal("70"))
+        self.assertEqual(self.non.cost_price, Decimal("2200"))
+        self.assertEqual(
+            StockMovement.objects.get(product=self.non, kind=StockMovement.Kind.KIRIM).note,
+            "ta'minotchidan",
+        )
+
+    def test_correction_sets_the_exact_quantity(self):
+        self.client.post(reverse("product_edit", args=[self.non.pk]), {
+            "save_stock": "1", "kind": StockMovement.Kind.TUZATISH, "quantity": "45", "note": "sanoq",
+        })
+        self.non.refresh_from_db()
+        self.assertEqual(self.non.quantity, Decimal("45"))
+
+    def test_unsold_product_is_deleted(self):
+        self.client.post(reverse("product_delete", args=[self.non.pk]))
+        self.assertFalse(Product.objects.filter(pk=self.non.pk).exists())
+
+    def test_sold_product_is_archived_instead_of_deleted(self):
+        self.sell([{"product": self.non.pk, "quantity": 1}])
+        self.client.post(reverse("product_delete", args=[self.non.pk]))
+
+        self.non.refresh_from_db()
+        self.assertFalse(self.non.is_active)
+
+    def test_cashier_cannot_touch_other_branch_product(self):
+        self.client.force_login(self.make_cashier("chetdagi", branches=[self.branch]))
+        self.assertEqual(
+            self.client.get(reverse("product_edit", args=[self.boshqa.pk])).status_code, 404
+        )
+
+
+class ReportTests(SalesMixin, TestCase):
+    def setUp(self):
+        super().setUp()
+        self.client.force_login(self.make_director())
+
+    def test_report_totals_match_the_sales(self):
+        self.sell([{"product": self.non.pk, "quantity": 3}])      # 12000, tannarx 6000
+        self.sell([{"product": self.sut.pk, "quantity": 1}])      # 12000, tannarx 8000
+
+        stats = self.client.get(reverse("reports")).context["stats"]
+        self.assertEqual(stats["revenue"], Decimal("24000"))
+        self.assertEqual(stats["profit"], Decimal("10000"))
+        self.assertEqual(stats["checks"], 2)
+
+    def test_refunded_part_is_removed_from_revenue(self):
+        sale = self.sell([{"product": self.non.pk, "quantity": 4}])   # 16000
+        refund(sale=sale, rows={sale.items.get().pk: 2}, user=self.cashier)
+
+        stats = self.client.get(reverse("reports")).context["stats"]
+        self.assertEqual(stats["revenue"], Decimal("8000"))
+        self.assertEqual(stats["profit"], Decimal("4000"))
+
+    def test_dashboard_shows_today_numbers(self):
+        self.sell([{"product": self.sut.pk, "quantity": 2}])
+        context = self.client.get(reverse("dashboard")).context
+        self.assertEqual(context["stats"]["revenue"], Decimal("24000"))
+        self.assertEqual(context["stats"]["checks"], 1)
+        self.assertTrue(context["has_data"])
+
+    def test_low_stock_products_are_listed(self):
+        self.non.min_quantity = Decimal("60")
+        self.non.save(update_fields=["min_quantity"])
+
+        alerts = self.client.get(reverse("dashboard")).context["alerts"]
+        self.assertEqual(alerts["low_count"], 1)
+        self.assertEqual(alerts["low"].get(), self.non)
+
+    def test_payment_breakdown_groups_by_method(self):
+        self.sell(payment_method=PaymentMethod.NAQD, paid_amount="8000")
+        self.sell(payment_method=PaymentMethod.KARTA)
+
+        payments = self.client.get(reverse("reports")).context["payments"]
+        self.assertEqual({p["label"] for p in payments}, {"Naqd", "Plastik karta"})
+
+    def test_cashier_breakdown_counts_checks(self):
+        self.sell()
+        self.sell()
+        rows = self.client.get(reverse("reports")).context["cashiers"]
+        self.assertEqual(rows[0]["checks"], 2)
+
+    def test_report_period_filter_is_applied(self):
+        self.sell()
+        response = self.client.get(reverse("reports"), {"dan": "2000-01-01", "gacha": "2000-01-31"})
+        self.assertEqual(response.context["stats"]["checks"], 0)
+
+
+# ---------------------------------------------------------------------------
+# Formalardagi raqamli maydonlar
+# ---------------------------------------------------------------------------
+
+class NumberInputTests(BaseDataMixin, TestCase):
+    """Brauzer yaroqli qiymatlarni `min + n × step` deb hisoblaydi.
+
+    Shuning uchun `min` `step` ga bo'linmasa, foydalanuvchi butun summani
+    (masalan 20 000) kirita olmay qoladi — forma serverga umuman yetib kelmaydi.
+    """
+
+    def _forms(self):
+        director = self.make_director()
+        customer = Customer.objects.create(
+            company=self.company, full_name="Mijoz", debt=Decimal("390000")
+        )
+        return [
+            CustomerPaymentForm(customer=customer),
+            CustomerForm(),
+            StockAdjustForm(),
+            VariantForm(),
+            ProductBaseForm(user=director),
+            ProductEditForm(user=director),
+        ]
+
+    def test_min_is_a_multiple_of_step(self):
+        for form in self._forms():
+            for name, field in form.fields.items():
+                attrs = field.widget.attrs
+                step, minimum = attrs.get("step"), attrs.get("min")
+                if step in (None, "any") or minimum in (None, ""):
+                    continue
+                with self.subTest(form=type(form).__name__, field=name):
+                    self.assertEqual(
+                        Decimal(str(minimum)) % Decimal(str(step)), Decimal("0"),
+                        f"min={minimum} step={step} — oraliq qiymatlar rad etiladi",
+                    )
+
+    def test_round_payment_is_accepted(self):
+        customer = Customer.objects.create(
+            company=self.company, full_name="Qarzdor", debt=Decimal("390000")
+        )
+        form = CustomerPaymentForm({"amount": "20000", "note": ""}, customer=customer)
+        self.assertTrue(form.is_valid(), form.errors)
+
+    def test_fractional_quantity_is_allowed_for_weighed_goods(self):
+        form = StockAdjustForm({
+            "kind": StockMovement.Kind.KIRIM, "quantity": "2.5", "note": "",
+        })
+        self.assertTrue(form.is_valid(), form.errors)
+        self.assertEqual(form.cleaned_data["quantity"], Decimal("2.5"))
 
 
 # ---------------------------------------------------------------------------

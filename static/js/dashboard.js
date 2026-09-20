@@ -78,8 +78,14 @@
     };
   }
 
+  // Sahifada bo'lmagan diagramma chizilmaydi — hisobotlar sahifasi
+  // dashboard'dagi diagrammalarning bir qismini ishlatadi.
+  function canvas(id) {
+    return document.getElementById(id);
+  }
+
   function buildSales(p) {
-    return new Chart(document.getElementById("salesChart"), {
+    return new Chart(canvas("salesChart"), {
       type: "line",
       data: {
         labels: D.days,
@@ -123,7 +129,7 @@
   }
 
   function buildPayments(p) {
-    return new Chart(document.getElementById("paymentsChart"), {
+    return new Chart(canvas("paymentsChart"), {
       type: "doughnut",
       data: {
         labels: D.payments.map(function (x) { return x.label; }),
@@ -161,7 +167,7 @@
   function buildHourly(p) {
     var o = baseOptions(p);
     o.plugins.tooltip.callbacks.label = function (ctx) { return " " + fmt(ctx.parsed.y); };
-    return new Chart(document.getElementById("hourlyChart"), {
+    return new Chart(canvas("hourlyChart"), {
       type: "bar",
       data: {
         labels: D.hours,
@@ -188,7 +194,7 @@
     delete o.scales.y.ticks.callback;   // kategoriya o'qi — nomlar o'zi chiqadi
     o.scales.y.ticks.padding = 4;
     o.plugins.tooltip.callbacks.label = function (ctx) { return " " + fmt(ctx.parsed.x) + " dona"; };
-    return new Chart(document.getElementById("topChart"), {
+    return new Chart(canvas("topChart"), {
       type: "bar",
       data: {
         labels: D.top_products.map(function (x) { return x.name; }),
@@ -205,11 +211,19 @@
     });
   }
 
+  var BUILDERS = [
+    ["salesChart", buildSales],
+    ["paymentsChart", buildPayments],
+    ["hourlyChart", buildHourly],
+    ["topChart", buildTop],
+  ];
+
   function render() {
     charts.forEach(function (c) { c.destroy(); });
     var p = palette();
     Chart.defaults.font.family = getComputedStyle(document.body).fontFamily;
-    charts = [buildSales(p), buildPayments(p), buildHourly(p), buildTop(p)];
+    charts = BUILDERS.filter(function (pair) { return canvas(pair[0]); })
+                     .map(function (pair) { return pair[1](p); });
   }
 
   render();

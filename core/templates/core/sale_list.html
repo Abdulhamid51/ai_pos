@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block title %}Sotuvlar · AI POS{% endblock %}
+
+{% block topbar_extra %}
+  <span class="chip">{{ stats.checks }} ta chek</span>
+  <a class="btn btn-primary" href="{% url 'pos' %}">Kassaga o'tish</a>
+{% endblock %}
+
+{% block content %}
+
+<section class="grid grid-kpi">
+  <div class="card kpi">
+    <div class="label">Tushum</div>
+    <div class="value">{{ stats.revenue|floatformat:0|intcomma }} <span class="unit">{{ currency }}</span></div>
+    <div class="delta">tanlangan davr uchun</div>
+  </div>
+  <div class="card kpi">
+    <div class="label">Foyda</div>
+    <div class="value">{{ stats.profit|floatformat:0|intcomma }} <span class="unit">{{ currency }}</span></div>
+    <div class="delta">rentabellik {{ stats.margin_pct|floatformat:1 }}%</div>
+  </div>
+  <div class="card kpi">
+    <div class="label">O'rtacha chek</div>
+    <div class="value">{{ stats.avg_check|floatformat:0|intcomma }} <span class="unit">{{ currency }}</span></div>
+    <div class="delta">{{ stats.checks }} ta chek bo'yicha</div>
+  </div>
+  <div class="card kpi">
+    <div class="label">Qaytarilgan</div>
+    <div class="value">{{ stats.refunded|floatformat:0|intcomma }} <span class="unit">{{ currency }}</span></div>
+    <div class="delta {% if stats.refunded %}down{% endif %}">qaytarilgan tovarlar summasi</div>
+  </div>
+</section>
+
+<div class="card">
+  <div class="toolbar">
+    <form class="toolbar-filters" method="get">
+      <div class="search-box grow">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.2-3.2"/></svg>
+        <input type="search" name="q" value="{{ query }}" placeholder="Chek raqami, mijoz yoki mahsulot">
+      </div>
+      <input class="input auto" type="date" name="dan" value="{{ since|date:'Y-m-d' }}" aria-label="Boshlanish sanasi">
+      <input class="input auto" type="date" name="gacha" value="{{ until|date:'Y-m-d' }}" aria-label="Tugash sanasi">
+      <select class="input auto" name="branch">
+        <option value="">Barcha filiallar</option>
+        {% for b in branches %}
+          <option value="{{ b.pk }}" {% if branch_id == b.pk|stringformat:"s" %}selected{% endif %}>{{ b.name }}</option>
+        {% endfor %}
+      </select>
+      <select class="input auto" name="payment">
+        <option value="">To'lov turi</option>
+        {% for value, label in payment_methods %}
+          <option value="{{ value }}" {% if payment == value|stringformat:"s" %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+      <select class="input auto" name="status">
+        <option value="">Holat</option>
+        {% for value, label in statuses %}
+          <option value="{{ value }}" {% if status == value|stringformat:"s" %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+      <button class="btn" type="submit">Qidirish</button>
+      <a class="btn" href="{% url 'sale_list' %}">Tozalash</a>
+    </form>
+  </div>
+
+  <div class="table-wrap">
+    <table class="data">
+      <thead>
+        <tr>
+          <th>Chek</th><th>Sana</th><th>Kassir</th><th>Mijoz</th>
+          <th>To'lov</th><th class="num">Qatorlar</th><th class="num">Summa</th><th>Holat</th><th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in sales %}
+          <tr>
+            <td><a href="{% url 'sale_detail' s.pk %}"><strong>№{{ s.number }}</strong></a></td>
+            <td class="muted">{{ s.created_at|date:"d.m.Y H:i" }}</td>
+            <td>{{ s.cashier|default:"—" }}</td>
+            <td>
+              {% if s.customer %}
+                <a href="{% url 'customer_detail' s.customer.pk %}">{{ s.customer.full_name }}</a>
+              {% else %}<span class="muted">Oddiy xaridor</span>{% endif %}
+            </td>
+            <td>
+              <span class="pay-tag pay-{{ s.payment_method }}">{{ s.get_payment_method_display }}</span>
+            </td>
+            <td class="num muted">{{ s.item_count }}</td>
+            <td class="num"><strong>{{ s.net_total|floatformat:0|intcomma }}</strong> {{ currency }}</td>
+            <td>
+              <span class="status {% if s.status == 1 %}on{% else %}warn{% endif %}">{{ s.get_status_display }}</span>
+            </td>
+            <td class="num">
+              <a class="btn btn-sm" href="{% url 'sale_receipt' s.pk %}" target="_blank" rel="noopener">Chek</a>
+            </td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="9">
+            <div class="empty">
+              <p>Tanlangan shartlarga mos sotuv topilmadi.</p>
+              <a class="btn btn-primary" href="{% url 'pos' %}">Kassani ochish</a>
+            </div>
+          </td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if page_obj.has_other_pages %}
+    <div class="pagination">
+      {% if page_obj.has_previous %}
+        <a class="btn btn-sm" href="{% querystring page=page_obj.previous_page_number %}">← Oldingi</a>
+      {% endif %}
+      <span class="muted">{{ page_obj.number }} / {{ page_obj.paginator.num_pages }}</span>
+      {% if page_obj.has_next %}
+        <a class="btn btn-sm" href="{% querystring page=page_obj.next_page_number %}">Keyingi →</a>
+      {% endif %}
+    </div>
+  {% endif %}
+</div>
+{% endblock %}

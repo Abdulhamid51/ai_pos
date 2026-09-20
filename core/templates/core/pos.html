@@ -1,0 +1,173 @@
+{% extends "base.html" %}
+{% load humanize static %}
+
+{% block title %}Kassa · AI POS{% endblock %}
+
+{% block topbar_extra %}
+  <span class="chip">{{ branch.name }}</span>
+  <a class="btn" href="{% url 'sale_list' %}">Sotuvlar tarixi</a>
+{% endblock %}
+
+{% block content %}
+<div class="pos-layout">
+
+  <!-- Chap taraf: qidiruv va mahsulotlar -->
+  <section class="card pos-catalog">
+    <div class="toolbar">
+      <div class="search-box grow">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.2-3.2"/></svg>
+        <input type="search" id="posSearch" autocomplete="off" autofocus
+               placeholder="Shtrix-kodni skanerlang yoki nomini yozing">
+      </div>
+      <span class="muted" id="posHint">Skaner kodni o'qisa, mahsulot savatga o'zi tushadi</span>
+    </div>
+
+    <div class="card-body">
+      <div class="pos-grid" id="posResults">
+        {% for p in quick_products %}
+          <button type="button" class="pos-item" data-product="{{ p.pk }}"
+                  data-name="{{ p }}" data-price="{{ p.price|floatformat:2 }}"
+                  data-stock="{{ p.quantity|floatformat:3 }}" data-unit="{{ p.get_unit_display }}">
+            <span class="pos-item-name">{{ p.name }}</span>
+            {% if p.color %}
+              <span class="color-tag"><span class="swatch" style="background:{{ p.color.hex|default:'#94a3b8' }}"></span>{{ p.color.name }}</span>
+            {% endif %}
+            <span class="pos-item-foot">
+              <span class="price">{{ p.price|floatformat:0|intcomma }}</span>
+              <span class="stock {% if p.is_low_stock %}low{% endif %}">{{ p.quantity|floatformat:0 }} {{ p.get_unit_display }}</span>
+            </span>
+          </button>
+        {% empty %}
+          <p class="muted">Bu filialda sotuvga tayyor mahsulot yo'q.
+            <a href="{% url 'product_create' %}">Mahsulot qo'shish</a>
+          </p>
+        {% endfor %}
+      </div>
+    </div>
+  </section>
+
+  <!-- O'ng taraf: savat -->
+  <aside class="card pos-cart">
+    <div class="card-head">
+      <h2>Savat</h2>
+      <span class="sub" id="cartCount">0 ta qator</span>
+    </div>
+
+    <div class="pos-cart-body" id="cartRows">
+      <div class="empty pos-empty" id="cartEmpty">
+        <svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" stroke-width="1.5"
+             stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="9" cy="20" r="1.5"/><circle cx="18" cy="20" r="1.5"/>
+          <path d="M2 3h3l2.6 12.4a1 1 0 0 0 1 .8h8.8a1 1 0 0 0 1-.8L21 7H6"/>
+        </svg>
+        <p>Savat bo'sh — mahsulotni tanlang yoki kodini skanerlang.</p>
+      </div>
+    </div>
+
+    <div class="pos-cart-foot">
+      <div class="field">
+        <label for="posCustomer">Mijoz</label>
+        <select class="input" id="posCustomer">
+          <option value="">Oddiy xaridor</option>
+          {% for c in customers %}
+            <option value="{{ c.pk }}" data-discount="{{ c.discount_percent }}" data-debt="{{ c.debt|floatformat:0 }}">
+              {{ c.full_name }}{% if c.phone %} · {{ c.phone }}{% endif %}{% if c.discount_percent %} · −{{ c.discount_percent|floatformat:0 }}%{% endif %}
+            </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="pos-sum">
+        <span>Summa</span><span id="sumSubtotal">0</span>
+      </div>
+      <div class="pos-sum">
+        <label for="posDiscount">Chegirma</label>
+        <input class="input num-input" type="number" id="posDiscount" min="0" step="1000" value="0">
+      </div>
+      <div class="pos-sum" id="autoDiscountRow" hidden>
+        <span>Mijoz chegirmasi</span><span id="sumAutoDiscount">0</span>
+      </div>
+      {% if vat_percent %}
+        <div class="pos-sum muted-row">
+          <span>QQS ({{ vat_percent|floatformat:0 }}%, narx ichida)</span><span id="sumVat">0</span>
+        </div>
+      {% endif %}
+      <div class="pos-sum total">
+        <span>Jami</span><span id="sumTotal">0 {{ currency }}</span>
+      </div>
+
+      <div class="segmented pos-payments" id="posPayment" role="group" aria-label="To'lov turi">
+        {% for value, label in payment_methods %}
+          <button type="button" data-payment="{{ value }}" aria-pressed="{% if forloop.first %}true{% else %}false{% endif %}">{{ label }}</button>
+        {% endfor %}
+      </div>
+
+      <div class="field" id="cashRow">
+        <label for="posPaid">Berilgan pul</label>
+        <input class="input" type="number" id="posPaid" min="0" step="1000" placeholder="aniq summa">
+        <div class="muted" id="changeHint"></div>
+      </div>
+
+      <div class="alert danger" id="posError" hidden></div>
+
+      <div class="pos-actions">
+        <button class="btn" type="button" id="posClear">Tozalash</button>
+        <button class="btn btn-primary" type="button" id="posCheckout" disabled>Yakunlash</button>
+      </div>
+      <p class="muted pos-keys">F2 — yakunlash · F4 — qidiruvga o'tish · Esc — tozalash</p>
+    </div>
+  </aside>
+</div>
+
+<!-- Sotuv yakunlangandan keyingi oyna -->
+<div class="modal-overlay" id="doneModal" hidden role="dialog" aria-modal="true"
+     aria-labelledby="doneTitle">
+  <div class="modal modal-compact" tabindex="-1">
+    <button class="icon-btn modal-close" type="button" id="doneClose" aria-label="Yopish">
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+    </button>
+
+    <div class="done-box">
+      <span class="done-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor"
+             stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m4 12.5 5.5 5.5L20 7"/></svg>
+      </span>
+      <h2 id="doneTitle">Sotuv yakunlandi</h2>
+      <p class="done-meta" id="doneMeta"></p>
+
+      <div class="done-amounts">
+        <div class="done-amount">
+          <span>Chek summasi</span>
+          <strong id="doneTotal"></strong>
+        </div>
+        <div class="done-amount accent" id="doneChangeRow" hidden>
+          <span>Qaytim</span>
+          <strong id="doneChange"></strong>
+        </div>
+        <div class="done-amount warn" id="doneDebtRow" hidden>
+          <span>Mijozning umumiy qarzi</span>
+          <strong id="doneDebt"></strong>
+        </div>
+      </div>
+
+      <div class="done-actions">
+        <a class="btn" id="doneReceipt" href="#" target="_blank" rel="noopener">Chekni chop etish</a>
+        <button class="btn btn-primary" type="button" id="doneNext">Yangi sotuv</button>
+      </div>
+      <p class="muted done-keys">Enter — yangi sotuv · Esc — yopish</p>
+    </div>
+  </div>
+</div>
+
+{{ allow_negative_stock|json_script:"allow-negative" }}
+<span id="pos-config" data-currency="{{ currency }}"
+      data-vat="{{ vat_percent|floatformat:2 }}"
+      data-search="{% url 'pos_search' %}"
+      data-checkout="{% url 'pos_checkout' %}" hidden></span>
+{% endblock %}
+
+{% block scripts %}
+<script src="{% static 'js/pos.js' %}"></script>
+{% endblock %}

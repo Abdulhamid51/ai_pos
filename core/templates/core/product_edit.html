@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block title %}{{ product.name }} · AI POS{% endblock %}
+
+{% block topbar_extra %}
+  <span class="chip">{{ product.branch.name }}</span>
+  <a class="btn" href="{% url 'product_list' %}">← Mahsulotlar</a>
+{% endblock %}
+
+{% block content %}
+<div class="grid grid-2">
+
+  <form method="post" enctype="multipart/form-data" novalidate>
+    {% csrf_token %}
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-head"><h2>Mahsulot ma'lumotlari</h2>
+        <span class="sub">{{ product.branch.get_trade_type_display }}</span>
+      </div>
+      <div class="card-body">
+        {% if form.non_field_errors %}<div class="alert danger">{{ form.non_field_errors }}</div>{% endif %}
+
+        <div class="form-grid">
+          {% for f in form %}
+            {% if f.name in core_fields or f.name == 'color' or f.name == 'color_hex' %}
+              {% if f.name != 'is_active' %}
+                <div class="field {% if f.name == 'name' %}span-2{% endif %}">
+                  <label for="{{ f.id_for_label }}">
+                    {{ f.label }}{% if f.field.required %}<span class="req" title="Majburiy maydon">*</span>{% endif %}
+                  </label>
+                  {{ f }}
+                  {% if f.errors %}<div class="field-error">{{ f.errors|striptags }}</div>{% endif %}
+                </div>
+              {% endif %}
+            {% endif %}
+          {% endfor %}
+        </div>
+
+        <div class="check-row">
+          <label>{{ form.is_active }} {{ form.is_active.label }}</label>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>Qo'shimcha ma'lumotlar</h2>
+        <span class="sub">savdo turiga qarab</span>
+      </div>
+      <div class="card-body">
+        <div class="form-grid">
+          {% for f in form %}
+            {% if f.name in trade_fields %}
+              <div class="field {% if f.name == 'description' %}span-2{% endif %}">
+                <label for="{{ f.id_for_label }}">{{ f.label }}</label>
+                {{ f }}
+                {% if f.errors %}<div class="field-error">{{ f.errors|striptags }}</div>{% endif %}
+              </div>
+            {% endif %}
+          {% endfor %}
+        </div>
+
+        <div class="form-actions">
+          <a class="btn" href="{% url 'product_list' %}">Bekor qilish</a>
+          <button class="btn btn-primary" type="submit">Saqlash</button>
+        </div>
+      </div>
+    </div>
+  </form>
+
+  <div style="display:flex;flex-direction:column;gap:16px">
+    <div class="card">
+      <div class="card-head"><h2>Ombor</h2>
+        <span class="sub">hozir: {{ product.quantity|floatformat:0 }} {{ product.get_unit_display }}</span>
+      </div>
+      <div class="card-body">
+        <div class="info-list">
+          <div><span>Tan narxi</span><span>{{ product.cost_price|floatformat:0|intcomma }} {{ currency }}</span></div>
+          <div><span>Sotuv narxi</span><span>{{ product.price|floatformat:0|intcomma }} {{ currency }}</span></div>
+          <div><span>Ustama</span><span>{{ product.profit|floatformat:0|intcomma }} {{ currency }}</span></div>
+          <div><span>Sotilgan</span><span>{{ sold_total.qty|default:0|floatformat:0 }} {{ product.get_unit_display }}</span></div>
+          {% if sold_total.back %}
+            <div><span>Qaytarilgan</span><span>{{ sold_total.back|floatformat:0 }} {{ product.get_unit_display }}</span></div>
+          {% endif %}
+        </div>
+
+        <form method="post" style="margin-top:16px">
+          {% csrf_token %}
+          {% for f in stock_form %}
+            <div class="field">
+              <label for="{{ f.id_for_label }}">{{ f.label }}</label>
+              {{ f }}
+              {% if f.help_text %}<div class="muted">{{ f.help_text }}</div>{% endif %}
+              {% if f.errors %}<div class="field-error">{{ f.errors|striptags }}</div>{% endif %}
+            </div>
+          {% endfor %}
+          <div class="form-actions">
+            <button class="btn btn-primary" type="submit" name="save_stock" value="1">Qoldiqni yangilash</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>Ombor harakatlari</h2>
+        <span class="sub">so'nggi 20 ta</span>
+      </div>
+      <div class="table-wrap">
+        <table class="data">
+          <thead><tr><th>Sana</th><th>Amal</th><th class="num">O'zgarish</th><th class="num">Qoldiq</th></tr></thead>
+          <tbody>
+            {% for m in movements %}
+              <tr>
+                <td class="muted">{{ m.created_at|date:"d.m.Y H:i" }}</td>
+                <td>
+                  {{ m.get_kind_display }}
+                  {% if m.sale %}<a class="muted" href="{% url 'sale_detail' m.sale.pk %}">№{{ m.sale.number }}</a>{% endif %}
+                  {% if m.note %}<div class="muted">{{ m.note }}</div>{% endif %}
+                </td>
+                <td class="num {% if m.quantity < 0 %}minus{% else %}plus{% endif %}">
+                  {% if m.quantity > 0 %}+{% endif %}{{ m.quantity|floatformat:0 }}
+                </td>
+                <td class="num muted">{{ m.balance_after|floatformat:0 }}</td>
+              </tr>
+            {% empty %}
+              <tr><td colspan="4"><div class="empty"><p>Hali harakat yo'q.</p></div></td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>O'chirish</h2></div>
+      <div class="card-body">
+        <p class="muted">Mahsulot cheklarda qatnashgan bo'lsa o'chirilmaydi — sotuvdan olinadi.</p>
+        <form method="post" action="{% url 'product_delete' product.pk %}"
+              onsubmit="return confirm('{{ product.name|escapejs }} o‘chirilsinmi?')">
+          {% csrf_token %}
+          <div class="form-actions">
+            <button class="btn btn-danger" type="submit">Mahsulotni o'chirish</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<datalist id="color-options">
+  {% for c in colors %}<option value="{{ c.name }}" data-hex="{{ c.hex }}"></option>{% endfor %}
+</datalist>
+{% endblock %}

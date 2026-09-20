@@ -224,3 +224,6 @@ POS_IMAGE_MAX_SIDE = int(os.environ.get("POS_IMAGE_MAX_SIDE", "1600"))
 POS_IMAGE_QUALITY = int(os.environ.get("POS_IMAGE_QUALITY", "85"))
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
+GEMINI_MODEL='gemini-3.1-flash-lite'

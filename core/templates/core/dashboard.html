@@ -9,39 +9,57 @@
          stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18"/><path d="M5 21V8l7-5 7 5v13"/></svg>
     {{ store_name }}
   </span>
-  <span class="chip">Namunaviy ma'lumot</span>
+  <a class="btn btn-primary" href="{% url 'pos' %}">Kassani ochish</a>
 {% endblock %}
 
 {% block content %}
 
+{% if not has_data %}
+  <div class="alert info">
+    Hali bironta sotuv qayd etilmagan — diagrammalar birinchi chekdan keyin to'la ishlaydi.
+    <a href="{% url 'pos' %}">Kassani ochish</a>
+  </div>
+{% endif %}
+
 <section class="grid grid-kpi">
   <div class="card kpi">
     <div class="label">Bugungi tushum</div>
-    <div class="value">{{ kpi.revenue_today|intcomma }} <span class="unit">{{ currency }}</span></div>
-    <div class="delta {% if kpi.revenue_change >= 0 %}up{% else %}down{% endif %}">
-      {% if kpi.revenue_change >= 0 %}▲{% else %}▼{% endif %} {{ kpi.revenue_change }}% — kechagiga nisbatan
-    </div>
+    <div class="value">{{ stats.revenue|floatformat:0|intcomma }} <span class="unit">{{ currency }}</span></div>
+    {% if revenue_change is not None %}
+      <div class="delta {% if revenue_change >= 0 %}up{% else %}down{% endif %}">
+        {% if revenue_change >= 0 %}▲{% else %}▼{% endif %} {{ revenue_change }}% — kechagiga nisbatan
+      </div>
+    {% else %}
+      <div class="delta">kecha sotuv bo'lmagan</div>
+    {% endif %}
   </div>
   <div class="card kpi">
     <div class="label">Bugungi foyda</div>
-    <div class="value">{{ kpi.profit_today|intcomma }} <span class="unit">{{ currency }}</span></div>
-    <div class="delta">Tushumning {{ kpi.margin_pct }}% qismi</div>
+    <div class="value">{{ stats.profit|floatformat:0|intcomma }} <span class="unit">{{ currency }}</span></div>
+    <div class="delta">tushumning {{ stats.margin_pct|floatformat:1 }}% qismi</div>
   </div>
   <div class="card kpi">
     <div class="label">Cheklar soni</div>
-    <div class="value">{{ kpi.checks_today }} <span class="unit">ta</span></div>
-    <div class="delta">Bugun kassadan o'tgan</div>
+    <div class="value">{{ stats.checks }} <span class="unit">ta</span></div>
+    <div class="delta">bugun kassadan o'tgan</div>
   </div>
   <div class="card kpi">
     <div class="label">O'rtacha chek</div>
-    <div class="value">{{ kpi.avg_check|intcomma }} <span class="unit">{{ currency }}</span></div>
-    <div class="delta">Bitta xarid o'rtachasi</div>
+    <div class="value">{{ stats.avg_check|floatformat:0|intcomma }} <span class="unit">{{ currency }}</span></div>
+    <div class="delta">bitta xarid o'rtachasi</div>
   </div>
   <div class="card kpi">
     <div class="label">Qoldiq kam mahsulot</div>
-    <div class="value">{{ kpi.low_stock }} <span class="unit">ta</span></div>
-    <div class="delta down">Minimal qoldiqdan past</div>
+    <div class="value">{{ alerts.low_count }} <span class="unit">ta</span></div>
+    <div class="delta {% if alerts.low_count %}down{% endif %}">minimal qoldiqdan past</div>
   </div>
+  {% if debt.total %}
+    <div class="card kpi">
+      <div class="label">Mijozlardagi qarz</div>
+      <div class="value">{{ debt.total|floatformat:0|intcomma }} <span class="unit">{{ currency }}</span></div>
+      <div class="delta down">{{ debt.people }} ta mijozda</div>
+    </div>
+  {% endif %}
 </section>
 
 <section class="grid grid-2">
@@ -77,20 +95,24 @@
       <span class="sub">shu oy</span>
     </div>
     <div class="card-body">
-      <div class="chart-box sm"><canvas id="paymentsChart"></canvas></div>
-      <div class="legend">
-        {% for p in data.payments %}
-          <div class="legend-item">
-            <span class="legend-dot" data-series="{{ forloop.counter }}"></span>
-            {{ p.label }}
-            <span class="val">{{ p.value|intcomma }} {{ currency }}</span>
+      {% if data.payments %}
+        <div class="chart-box sm"><canvas id="paymentsChart"></canvas></div>
+        <div class="legend">
+          {% for p in data.payments %}
+            <div class="legend-item">
+              <span class="legend-dot" data-series="{{ forloop.counter }}"></span>
+              {{ p.label }}
+              <span class="val">{{ p.value|intcomma }} {{ currency }}</span>
+            </div>
+          {% endfor %}
+          <div class="legend-item" style="border-top:1px solid var(--border);padding-top:9px">
+            <strong>Jami</strong>
+            <span class="val"><strong>{{ payments_total|intcomma }} {{ currency }}</strong></span>
           </div>
-        {% endfor %}
-        <div class="legend-item" style="border-top:1px solid var(--border);padding-top:9px">
-          <strong>Jami</strong>
-          <span class="val"><strong>{{ payments_total|intcomma }} {{ currency }}</strong></span>
         </div>
-      </div>
+      {% else %}
+        <div class="empty"><p>Bu oyda hali sotuv bo'lmagan.</p></div>
+      {% endif %}
     </div>
   </div>
 </section>
@@ -109,10 +131,65 @@
   <div class="card">
     <div class="card-head">
       <h2>Eng ko'p sotilgan mahsulotlar</h2>
-      <span class="sub">shu hafta · dona</span>
+      <span class="sub">so'nggi 7 kun · dona</span>
     </div>
     <div class="card-body">
-      <div class="chart-box sm"><canvas id="topChart"></canvas></div>
+      {% if data.top_products %}
+        <div class="chart-box sm"><canvas id="topChart"></canvas></div>
+      {% else %}
+        <div class="empty"><p>Bu haftada sotuv bo'lmagan.</p></div>
+      {% endif %}
+    </div>
+  </div>
+</section>
+
+<section class="grid grid-2">
+  <div class="card">
+    <div class="card-head">
+      <h2>So'nggi cheklar</h2>
+      <span class="sub"><a href="{% url 'sale_list' %}">Barchasi →</a></span>
+    </div>
+    <div class="table-wrap">
+      <table class="data">
+        <thead><tr><th>Chek</th><th>Sana</th><th>Kassir</th><th>To'lov</th><th class="num">Summa</th></tr></thead>
+        <tbody>
+          {% for s in recent_sales %}
+            <tr>
+              <td><a href="{% url 'sale_detail' s.pk %}">№{{ s.number }}</a></td>
+              <td class="muted">{{ s.created_at|date:"d.m H:i" }}</td>
+              <td>{{ s.cashier|default:"—" }}</td>
+              <td><span class="pay-tag pay-{{ s.payment_method }}">{{ s.get_payment_method_display }}</span></td>
+              <td class="num">{{ s.net_total|floatformat:0|intcomma }} {{ currency }}</td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="5"><div class="empty"><p>Hali chek yo'q.</p></div></td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head">
+      <h2>Qoldig'i kam mahsulotlar</h2>
+      <span class="sub">{{ alerts.low_count }} ta</span>
+    </div>
+    <div class="table-wrap">
+      <table class="data">
+        <thead><tr><th>Mahsulot</th><th>Filial</th><th class="num">Qoldiq</th></tr></thead>
+        <tbody>
+          {% for p in alerts.low|slice:":8" %}
+            <tr>
+              <td><a href="{% url 'product_edit' p.pk %}">{{ p.name }}</a>
+                {% if p.color %}<div class="muted">{{ p.color.name }}</div>{% endif %}</td>
+              <td class="muted">{{ p.branch.name }}</td>
+              <td class="num"><span class="stock low">{{ p.quantity|floatformat:0 }} {{ p.get_unit_display }}</span></td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="3"><div class="empty"><p>Hammasi joyida — qoldiqlar yetarli.</p></div></td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
     </div>
   </div>
 </section>

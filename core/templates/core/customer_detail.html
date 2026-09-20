@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block title %}{{ customer.full_name }} · AI POS{% endblock %}
+
+{% block topbar_extra %}
+  {% if customer.debt %}<span class="chip">Qarz: {{ customer.debt|floatformat:0|intcomma }} {{ currency }}</span>{% endif %}
+  <a class="btn" href="{% url 'customer_edit' customer.pk %}">Tahrirlash</a>
+  <a class="btn" href="{% url 'customer_list' %}">← Mijozlar</a>
+{% endblock %}
+
+{% block content %}
+
+<section class="grid grid-kpi">
+  <div class="card kpi">
+    <div class="label">Jami xaridlar</div>
+    <div class="value">{{ stats.revenue|floatformat:0|intcomma }} <span class="unit">{{ currency }}</span></div>
+    <div class="delta">{{ stats.checks }} ta chek</div>
+  </div>
+  <div class="card kpi">
+    <div class="label">O'rtacha xarid</div>
+    <div class="value">{{ stats.avg_check|floatformat:0|intcomma }} <span class="unit">{{ currency }}</span></div>
+    <div class="delta">bitta chek o'rtachasi</div>
+  </div>
+  <div class="card kpi">
+    <div class="label">Qarz</div>
+    <div class="value">{{ customer.debt|floatformat:0|intcomma }} <span class="unit">{{ currency }}</span></div>
+    <div class="delta {% if customer.debt %}down{% endif %}">
+      {% if customer.debt_limit %}chegara: {{ customer.debt_limit|floatformat:0|intcomma }}{% else %}chegara qo'yilmagan{% endif %}
+    </div>
+  </div>
+  <div class="card kpi">
+    <div class="label">Doimiy chegirma</div>
+    <div class="value">{{ customer.discount_percent|floatformat:0 }} <span class="unit">%</span></div>
+    <div class="delta">kassada avtomatik</div>
+  </div>
+</section>
+
+<div class="grid grid-2">
+  <div class="card">
+    <div class="card-head"><h2>Xaridlar tarixi</h2>
+      <span class="sub">so'nggi 30 ta chek</span>
+    </div>
+    <div class="table-wrap">
+      <table class="data">
+        <thead><tr><th>Chek</th><th>Sana</th><th>To'lov</th><th class="num">Summa</th><th>Holat</th></tr></thead>
+        <tbody>
+          {% for s in sales %}
+            <tr>
+              <td><a href="{% url 'sale_detail' s.pk %}">№{{ s.number }}</a></td>
+              <td class="muted">{{ s.created_at|date:"d.m.Y H:i" }}</td>
+              <td><span class="pay-tag pay-{{ s.payment_method }}">{{ s.get_payment_method_display }}</span></td>
+              <td class="num">{{ s.net_total|floatformat:0|intcomma }} {{ currency }}</td>
+              <td><span class="status {% if s.status == 1 %}on{% else %}warn{% endif %}">{{ s.get_status_display }}</span></td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="5"><div class="empty"><p>Bu mijoz hali xarid qilmagan.</p></div></td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div style="display:flex;flex-direction:column;gap:16px">
+    <div class="card">
+      <div class="card-head"><h2>Ma'lumotlar</h2></div>
+      <div class="card-body">
+        <div class="info-list">
+          <div><span>F.I.Sh.</span><span>{{ customer.full_name }}</span></div>
+          <div><span>Telefon</span><span>{{ customer.phone|default:"—" }}</span></div>
+          <div><span>Manzil</span><span>{{ customer.address|default:"—" }}</span></div>
+          {% if customer.note %}<div><span>Izoh</span><span>{{ customer.note }}</span></div>{% endif %}
+          <div><span>Qo'shilgan</span><span>{{ customer.created_at|date:"d.m.Y" }}</span></div>
+        </div>
+      </div>
+    </div>
+
+    {% if customer.debt %}
+      <div class="card">
+        <div class="card-head"><h2>Qarzni to'lash</h2>
+          <span class="sub">{{ customer.debt|floatformat:0|intcomma }} {{ currency }}</span>
+        </div>
+        <div class="card-body">
+          <form method="post" action="{% url 'customer_pay' customer.pk %}">
+            {% csrf_token %}
+            {% for f in payment_form %}
+              <div class="field">
+                <label for="{{ f.id_for_label }}">{{ f.label }}</label>
+                {{ f }}
+                {% if f.errors %}<div class="field-error">{{ f.errors|striptags }}</div>{% endif %}
+              </div>
+            {% endfor %}
+            <div class="form-actions">
+              <button class="btn btn-primary" type="submit">To'lovni qabul qilish</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    {% endif %}
+
+    {% if payments %}
+      <div class="card">
+        <div class="card-head"><h2>To'lovlar tarixi</h2></div>
+        <div class="table-wrap">
+          <table class="data">
+            <thead><tr><th>Sana</th><th>Qabul qilgan</th><th class="num">Summa</th></tr></thead>
+            <tbody>
+              {% for p in payments %}
+                <tr>
+                  <td class="muted">{{ p.created_at|date:"d.m.Y H:i" }}</td>
+                  <td>{{ p.user|default:"—" }}{% if p.note %}<div class="muted">{{ p.note }}</div>{% endif %}</td>
+                  <td class="num">{{ p.amount|floatformat:0|intcomma }} {{ currency }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

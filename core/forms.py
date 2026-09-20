@@ -2,9 +2,23 @@ from decimal import Decimal
 
 from django import forms
 
-from .models import Branch, Color, Company, Product, User
+from .models import (
+    Branch,
+    Color,
+    Company,
+    Customer,
+    Product,
+    StockMovement,
+    User,
+)
 
 CONTROL = {"class": "input"}
+
+# Raqamli maydonlarning qadami. `step` ni `min` bilan kelishtirib qo'yish shart:
+# brauzer yaroqli qiymatlarni `min + n × step` deb hisoblaydi, shuning uchun
+# yirik qadam (masalan 1000) oraliq summalarni rad etib qo'yadi.
+MONEY_STEP = "0.01"     # pul — tiyinigacha
+AMOUNT_STEP = "0.001"   # miqdor — kg, litr, metr uchun kasr qiymat kerak
 
 
 class BranchChoiceField(forms.ModelChoiceField):
@@ -88,10 +102,31 @@ class ProductBaseForm(forms.ModelForm):
         allowed = set(branch.product_fields) | set(self.CORE_FIELDS)
         for name in self.Meta.fields:
             if name not in allowed:
-                cleaned[name] = self.fields[name].empty_value if hasattr(
-                    self.fields[name], "empty_value"
-                ) else None
+                cleaned[name] = self._blank_value(name)
         return cleaned
+
+    def _blank_value(self, name):
+        """Maydon turiga mos "bo'sh" qiymat — model NOT NULL bo'lsa ham yaraydi."""
+        field = self.fields[name]
+        if isinstance(field, forms.BooleanField):
+            return False
+        return getattr(field, "empty_value", None)
+
+
+def resolve_color(name, hex_value):
+    """Rang lug'atdan olinadi, bo'lmasa yangisi yaratiladi."""
+    name = (name or "").strip()
+    if not name:
+        return None
+
+    hex_value = (hex_value or "").strip()
+    color, _ = Color.objects.get_or_create(name=name, defaults={"hex": hex_value})
+
+    # Lug'atda kod bo'lmasa — foydalanuvchi bergani bilan to'ldiramiz.
+    if hex_value and not color.hex:
+        color.hex = hex_value
+        color.save(update_fields=["hex"])
+    return color
 
 
 class VariantForm(forms.Form):
@@ -112,7 +147,7 @@ class VariantForm(forms.Form):
     )
     quantity = forms.DecimalField(
         label="Boshlang'ich soni", max_digits=12, decimal_places=3, min_value=Decimal("0"),
-        widget=forms.NumberInput(attrs={"class": "input", "step": "1", "min": "0"}),
+        widget=forms.NumberInput(attrs={"class": "input", "step": AMOUNT_STEP}),
     )
     image = forms.ImageField(
         label="Rasm", required=False,
@@ -124,19 +159,9 @@ class VariantForm(forms.Form):
         return bool(cd.get("color") or cd.get("barcode") or cd.get("image") or cd.get("quantity"))
 
     def get_or_create_color(self):
-        """Rang lug'atdan olinadi, bo'lmasa yangisi yaratiladi."""
-        name = (self.cleaned_data.get("color") or "").strip()
-        if not name:
-            return None
-
-        hex_value = (self.cleaned_data.get("color_hex") or "").strip()
-        color, _ = Color.objects.get_or_create(name=name, defaults={"hex": hex_value})
-
-        # Lug'atda kod bo'lmasa — foydalanuvchi bergani bilan to'ldiramiz.
-        if hex_value and not color.hex:
-            color.hex = hex_value
-            color.save(update_fields=["hex"])
-        return color
+        return resolve_color(
+            self.cleaned_data.get("color"), self.cleaned_data.get("color_hex")
+        )
 
 
 VariantFormSet = forms.formset_factory(VariantForm, extra=0, min_num=1, validate_min=True)
@@ -270,3 +295,149 @@ class BranchSwitchForm(forms.Form):
         self.user = user
         self.fields["branch"].queryset = user.branches.filter(is_active=True)
         self.fields["branch"].initial = user.branch_id
+
+
+class ProductEditForm(ProductBaseForm):
+    """Mavjud mahsulotni tahrirlash — bitta rang, bitta shtrix-kod.
+
+    Qoldiq bu yerda o'zgartirilmaydi: uning uchun alohida ombor formasi bor,
+    shunda har bir o'zgarish jurnalga tushadi.
+    """
+
+    CORE_FIELDS = ProductBaseForm.CORE_FIELDS + ["barcode", "image", "is_active"]
+
+    color = forms.CharField(
+        label="Rang", max_length=50, required=False,
+        widget=forms.TextInput(attrs={"class": "input", "list": "color-options",
+                                      "autocomplete": "off"}),
+    )
+    color_hex = forms.CharField(
+        label="Rang kodi", max_length=7, required=False,
+        widget=forms.TextInput(attrs={"type": "color", "class": "color-input"}),
+    )
+
+    class Meta(ProductBaseForm.Meta):
+        fields = ProductBaseForm.Meta.fields + ["barcode", "image", "is_active"]
+        widgets = {
+            **ProductBaseForm.Meta.widgets,
+            "barcode": forms.TextInput(attrs={"placeholder": "avtomatik", **CONTROL}),
+            "image": forms.ClearableFileInput(attrs={"accept": "image/*"}),
+            "is_active": forms.CheckboxInput(attrs={"class": "checkbox"}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["barcode"].required = False
+        if self.instance.pk and self.instance.color:
+            self.fields["color"].initial = self.instance.color.name
+            self.fields["color_hex"].initial = self.instance.color.hex
+
+    def clean_barcode(self):
+        """Filial ichida shtrix-kod takrorlanmasin."""
+        barcode = (self.cleaned_data.get("barcode") or "").strip()
+        if not barcode:
+            return ""
+        branch = self.data.get("branch") or self.instance.branch_id
+        clash = Product.objects.filter(branch_id=branch, barcode=barcode).exclude(pk=self.instance.pk)
+        if clash.exists():
+            raise forms.ValidationError("Bu shtrix-kod shu filialda band.")
+        return barcode
+
+    def save(self, commit=True):
+        product = super().save(commit=False)
+        product.color = resolve_color(
+            self.cleaned_data.get("color"), self.cleaned_data.get("color_hex")
+        )
+        if commit:
+            product.save()
+        return product
+
+
+class StockAdjustForm(forms.Form):
+    """Qoldiqni o'zgartirish: kirim, chiqim yoki inventarizatsiya tuzatishi."""
+
+    KINDS = [
+        (StockMovement.Kind.KIRIM, "Kirim (omborga qo'shish)"),
+        (StockMovement.Kind.CHIQIM, "Chiqim (yaroqsiz, yo'qolgan)"),
+        (StockMovement.Kind.TUZATISH, "Tuzatish (aniq qoldiqni kiritish)"),
+    ]
+
+    kind = forms.TypedChoiceField(
+        label="Amal", choices=KINDS, coerce=int, initial=StockMovement.Kind.KIRIM,
+        widget=forms.Select(attrs={**CONTROL, "data-no-search": "1"}),
+    )
+    quantity = forms.DecimalField(
+        label="Miqdor", max_digits=12, decimal_places=3, min_value=Decimal("0"),
+        widget=forms.NumberInput(attrs={"step": AMOUNT_STEP, **CONTROL}),
+        help_text="Tuzatishda — omborda aslida qancha borligi.",
+    )
+    cost_price = forms.DecimalField(
+        label="Yangi tan narxi", max_digits=14, decimal_places=2, required=False,
+        min_value=Decimal("0"),
+        widget=forms.NumberInput(attrs={"step": MONEY_STEP, **CONTROL}),
+        help_text="Faqat kirimda: bo'sh qoldirilsa eski tan narxi saqlanadi.",
+    )
+    note = forms.CharField(
+        label="Izoh", max_length=255, required=False,
+        widget=forms.TextInput(attrs={**CONTROL, "placeholder": "masalan: ta'minotchidan keldi"}),
+    )
+
+    def delta_for(self, product):
+        """Mahsulotning hozirgi qoldig'iga nisbatan o'zgarish miqdori."""
+        kind = self.cleaned_data["kind"]
+        quantity = self.cleaned_data["quantity"]
+        if kind == StockMovement.Kind.KIRIM:
+            return quantity
+        if kind == StockMovement.Kind.CHIQIM:
+            return -quantity
+        return quantity - product.quantity      # tuzatish
+
+
+class CustomerForm(forms.ModelForm):
+    class Meta:
+        model = Customer
+        fields = [
+            "full_name", "phone", "address", "discount_percent",
+            "debt_limit", "note", "is_active",
+        ]
+        widgets = {
+            "full_name": forms.TextInput(attrs=CONTROL),
+            "phone": forms.TextInput(attrs={"placeholder": "+998 90 123 45 67", **CONTROL}),
+            "address": forms.TextInput(attrs=CONTROL),
+            "discount_percent": forms.NumberInput(attrs={"step": "0.01", "min": "0", "max": "100", **CONTROL}),
+            "debt_limit": forms.NumberInput(attrs={"step": MONEY_STEP, "min": "0", **CONTROL}),
+            "note": forms.TextInput(attrs=CONTROL),
+            "is_active": forms.CheckboxInput(attrs={"class": "checkbox"}),
+        }
+
+    def clean_discount_percent(self):
+        value = self.cleaned_data.get("discount_percent") or Decimal("0")
+        if value > 100:
+            raise forms.ValidationError("Chegirma 100 foizdan oshmasligi kerak.")
+        return value
+
+
+class CustomerPaymentForm(forms.Form):
+    """Mijoz qarzini to'laydi."""
+
+    amount = forms.DecimalField(
+        label="To'lov summasi", max_digits=14, decimal_places=2, min_value=Decimal("0.01"),
+        widget=forms.NumberInput(attrs={"step": MONEY_STEP, **CONTROL}),
+    )
+    note = forms.CharField(
+        label="Izoh", max_length=255, required=False, widget=forms.TextInput(attrs=CONTROL)
+    )
+
+    def __init__(self, *args, customer=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.customer = customer
+        if customer:
+            self.fields["amount"].initial = customer.debt
+
+    def clean_amount(self):
+        amount = self.cleaned_data["amount"]
+        if self.customer and amount > self.customer.debt:
+            raise forms.ValidationError(
+                f"Qarz {self.customer.debt:.0f} — bundan ortiq to'lov qabul qilinmaydi."
+            )
+        return amount

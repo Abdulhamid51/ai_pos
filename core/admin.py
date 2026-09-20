@@ -1,7 +1,18 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 
-from .models import Branch, Color, Company, Product, User
+from .models import (
+    Branch,
+    Color,
+    Company,
+    Customer,
+    CustomerPayment,
+    Product,
+    Sale,
+    SaleItem,
+    StockMovement,
+    User,
+)
 
 
 class BranchInline(admin.TabularInline):
@@ -78,6 +89,54 @@ class ProductAdmin(admin.ModelAdmin):
 class ColorAdmin(admin.ModelAdmin):
     list_display = ("name", "hex")
     search_fields = ("name",)
+
+
+@admin.register(Customer)
+class CustomerAdmin(admin.ModelAdmin):
+    list_display = ("full_name", "phone", "company", "discount_percent", "debt", "is_active")
+    list_filter = ("company", "is_active")
+    search_fields = ("full_name", "phone", "address")
+    autocomplete_fields = ("company",)
+    readonly_fields = ("debt",)      # qarz faqat sotuv va to'lov orqali o'zgaradi
+
+
+@admin.register(CustomerPayment)
+class CustomerPaymentAdmin(admin.ModelAdmin):
+    list_display = ("customer", "amount", "branch", "user", "created_at")
+    list_filter = ("branch", "created_at")
+    search_fields = ("customer__full_name", "customer__phone", "note")
+    autocomplete_fields = ("customer", "branch", "user")
+    date_hierarchy = "created_at"
+
+
+class SaleItemInline(admin.TabularInline):
+    model = SaleItem
+    extra = 0
+    fields = ("name", "barcode", "quantity", "price", "cost_price",
+              "discount_amount", "returned_quantity")
+    readonly_fields = ("name", "barcode", "price", "cost_price")
+
+
+@admin.register(Sale)
+class SaleAdmin(admin.ModelAdmin):
+    list_display = ("number", "branch", "created_at", "cashier", "customer",
+                    "payment_method", "total", "status")
+    list_filter = ("branch", "payment_method", "status", "created_at")
+    search_fields = ("number", "customer__full_name", "customer__phone", "items__name")
+    autocomplete_fields = ("branch", "cashier", "customer")
+    date_hierarchy = "created_at"
+    inlines = [SaleItemInline]
+    readonly_fields = ("number", "subtotal", "total", "vat_amount", "cost_total",
+                       "paid_amount", "change_amount", "created_at")
+
+
+@admin.register(StockMovement)
+class StockMovementAdmin(admin.ModelAdmin):
+    list_display = ("product", "kind", "quantity", "balance_after", "user", "created_at")
+    list_filter = ("kind", "created_at", "product__branch")
+    search_fields = ("product__name", "product__barcode", "note")
+    autocomplete_fields = ("product", "sale", "user")
+    date_hierarchy = "created_at"
 
 
 admin.site.site_header = "AI POS boshqaruvi"

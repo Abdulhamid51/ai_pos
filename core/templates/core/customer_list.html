@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block title %}Mijozlar · AI POS{% endblock %}
+
+{% block topbar_extra %}
+  <span class="chip">{{ total }} ta mijoz</span>
+  <a class="btn btn-primary" href="{% url 'customer_create' %}">+ Yangi mijoz</a>
+{% endblock %}
+
+{% block content %}
+
+{% if debt.total %}
+  <div class="alert warning">
+    {{ debt.people }} ta mijozda jami <strong>{{ debt.total|floatformat:0|intcomma }} {{ currency }}</strong> qarz bor.
+    {% if not only_debt %}<a href="?qarz=1">Faqat qarzdorlarni ko'rsatish</a>{% endif %}
+  </div>
+{% endif %}
+
+<div class="card">
+  <div class="toolbar">
+    <form class="toolbar-filters" method="get">
+      <div class="search-box grow">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.2-3.2"/></svg>
+        <input type="search" name="q" value="{{ query }}" placeholder="Ism, telefon yoki manzil">
+      </div>
+      <label class="check-row" style="margin:0">
+        <input class="checkbox" type="checkbox" name="qarz" value="1" {% if only_debt %}checked{% endif %}
+               onchange="this.form.submit()"> Faqat qarzdorlar
+      </label>
+      <button class="btn" type="submit">Qidirish</button>
+      {% if query or only_debt %}<a class="btn" href="{% url 'customer_list' %}">Tozalash</a>{% endif %}
+    </form>
+  </div>
+
+  <div class="table-wrap">
+    <table class="data">
+      <thead>
+        <tr><th style="width:44px"></th><th>Mijoz</th><th>Telefon</th><th>Manzil</th>
+            <th class="num">Chegirma</th><th class="num">Qarz</th><th>Holat</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for c in customers %}
+          <tr>
+            <td><span class="avatar sm">{{ c.full_name|first }}</span></td>
+            <td>
+              <a href="{% url 'customer_detail' c.pk %}">{{ c.full_name }}</a>
+              {% if c.note %}<div class="muted">{{ c.note }}</div>{% endif %}
+            </td>
+            <td class="muted">{{ c.phone|default:"—" }}</td>
+            <td class="muted">{{ c.address|default:"—" }}</td>
+            <td class="num">{% if c.discount_percent %}{{ c.discount_percent|floatformat:0 }}%{% else %}<span class="muted">—</span>{% endif %}</td>
+            <td class="num">
+              {% if c.debt %}
+                <span class="stock low">{{ c.debt|floatformat:0|intcomma }}</span>
+              {% else %}<span class="muted">—</span>{% endif %}
+            </td>
+            <td><span class="status {% if c.is_active %}on{% else %}off{% endif %}">{% if c.is_active %}Faol{% else %}Nofaol{% endif %}</span></td>
+            <td class="num"><a class="btn btn-sm" href="{% url 'customer_edit' c.pk %}">Tahrirlash</a></td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="8">
+            <div class="empty">
+              <p>{% if query or only_debt %}Mos mijoz topilmadi.{% else %}Hali mijoz qo'shilmagan.{% endif %}</p>
+              <a class="btn btn-primary" href="{% url 'customer_create' %}">Mijoz qo'shish</a>
+            </div>
+          </td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if page_obj.has_other_pages %}
+    <div class="pagination">
+      {% if page_obj.has_previous %}
+        <a class="btn btn-sm" href="{% querystring page=page_obj.previous_page_number %}">← Oldingi</a>
+      {% endif %}
+      <span class="muted">{{ page_obj.number }} / {{ page_obj.paginator.num_pages }}</span>
+      {% if page_obj.has_next %}
+        <a class="btn btn-sm" href="{% querystring page=page_obj.next_page_number %}">Keyingi →</a>
+      {% endif %}
+    </div>
+  {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block title %}Chek №{{ sale.number }}{% endblock %}
+
+{% block body %}
+<div class="receipt-page">
+  <div class="receipt" id="receipt">
+    <div class="receipt-head">
+      <div class="receipt-store">{{ company.name }}</div>
+      <div>{{ sale.branch.name }}</div>
+      {% if sale.branch.address %}<div>{{ sale.branch.address }}</div>{% endif %}
+      {% if sale.branch.phone %}<div>{{ sale.branch.phone }}</div>{% endif %}
+      {% if company.tin %}<div>STIR: {{ company.tin }}</div>{% endif %}
+    </div>
+
+    <div class="receipt-sep"></div>
+
+    <div class="receipt-meta">
+      <div><span>Chek</span><span>№{{ sale.number }}</span></div>
+      <div><span>Sana</span><span>{{ sale.created_at|date:"d.m.Y H:i" }}</span></div>
+      <div><span>Kassir</span><span>{{ sale.cashier|default:"—" }}</span></div>
+      {% if sale.customer %}<div><span>Mijoz</span><span>{{ sale.customer.full_name }}</span></div>{% endif %}
+    </div>
+
+    <div class="receipt-sep"></div>
+
+    <table class="receipt-items">
+      {% for item in items %}
+        <tr>
+          <td colspan="2">{{ item.name }}</td>
+        </tr>
+        <tr class="receipt-line">
+          <td>{{ item.quantity|floatformat:0 }} {{ item.unit }} × {{ item.price|floatformat:0|intcomma }}</td>
+          <td class="num">{{ item.line_total|floatformat:0|intcomma }}</td>
+        </tr>
+      {% endfor %}
+    </table>
+
+    <div class="receipt-sep"></div>
+
+    <div class="receipt-meta">
+      <div><span>Summa</span><span>{{ sale.subtotal|floatformat:0|intcomma }}</span></div>
+      {% if sale.discount_amount %}
+        <div><span>Chegirma</span><span>−{{ sale.discount_amount|floatformat:0|intcomma }}</span></div>
+      {% endif %}
+      <div class="receipt-total"><span>JAMI</span><span>{{ sale.total|floatformat:0|intcomma }} {{ currency }}</span></div>
+      {% if sale.vat_amount %}
+        <div><span>Shu jumladan QQS</span><span>{{ sale.vat_amount|floatformat:0|intcomma }}</span></div>
+      {% endif %}
+      <div><span>To'lov</span><span>{{ sale.get_payment_method_display }}</span></div>
+      {% if sale.payment_method == 1 %}
+        <div><span>Naqd</span><span>{{ sale.paid_amount|floatformat:0|intcomma }}</span></div>
+        <div><span>Qaytim</span><span>{{ sale.change_amount|floatformat:0|intcomma }}</span></div>
+      {% endif %}
+      {% if sale.refunded_amount %}
+        <div><span>Qaytarilgan</span><span>−{{ sale.refunded_amount|floatformat:0|intcomma }}</span></div>
+      {% endif %}
+    </div>
+
+    <div class="receipt-sep"></div>
+
+    <div class="receipt-foot">
+      {% if company.receipt_footer %}<p>{{ company.receipt_footer }}</p>{% endif %}
+      <p class="receipt-code">{{ sale.branch.pk }}-{{ sale.number }}</p>
+    </div>
+  </div>
+
+  <div class="receipt-actions">
+    <button class="btn btn-primary" type="button" onclick="window.print()">Chop etish</button>
+    <a class="btn" href="{% url 'sale_detail' sale.pk %}">Chek sahifasi</a>
+    <a class="btn" href="{% url 'pos' %}">Kassaga qaytish</a>
+  </div>
+</div>
+
+{% if auto_print %}
+  <script>window.addEventListener("load", function () { window.print(); });</script>
+{% endif %}
+{% endblock %}

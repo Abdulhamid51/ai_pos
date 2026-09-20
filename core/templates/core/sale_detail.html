@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block title %}Chek №{{ sale.number }} · AI POS{% endblock %}
+
+{% block topbar_extra %}
+  <span class="chip">{{ sale.get_status_display }}</span>
+  <a class="btn" href="{% url 'sale_receipt' sale.pk %}" target="_blank" rel="noopener">Chekni chop etish</a>
+  <a class="btn" href="{% url 'sale_list' %}">← Sotuvlar</a>
+{% endblock %}
+
+{% block content %}
+<div class="grid grid-2">
+
+  <div class="card">
+    <div class="card-head">
+      <h2>Chek №{{ sale.number }}</h2>
+      <span class="sub">{{ sale.created_at|date:"d.m.Y H:i" }}</span>
+    </div>
+    <div class="table-wrap">
+      <table class="data">
+        <thead>
+          <tr><th>Mahsulot</th><th class="num">Narxi</th><th class="num">Soni</th>
+              <th class="num">Chegirma</th><th class="num">Jami</th><th class="num">Qaytarilgan</th></tr>
+        </thead>
+        <tbody>
+          {% for item in items %}
+            <tr {% if item.returned_quantity %}class="returned-row"{% endif %}>
+              <td>
+                {% if item.product %}
+                  <a href="{% url 'product_edit' item.product.pk %}">{{ item.name }}</a>
+                {% else %}{{ item.name }}{% endif %}
+                {% if item.barcode %}<div class="muted"><code>{{ item.barcode }}</code></div>{% endif %}
+              </td>
+              <td class="num">{{ item.price|floatformat:0|intcomma }}</td>
+              <td class="num">{{ item.quantity|floatformat:0 }} {{ item.unit }}</td>
+              <td class="num muted">{% if item.discount_amount %}−{{ item.discount_amount|floatformat:0|intcomma }}{% else %}—{% endif %}</td>
+              <td class="num">{{ item.line_total|floatformat:0|intcomma }}</td>
+              <td class="num">{% if item.returned_quantity %}<span class="stock low">{{ item.returned_quantity|floatformat:0 }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card-body">
+      <div class="sum-list">
+        <div><span>Chegirmasiz summa</span><span>{{ sale.subtotal|floatformat:0|intcomma }} {{ currency }}</span></div>
+        {% if sale.discount_amount %}
+          <div><span>Chegirma</span><span>−{{ sale.discount_amount|floatformat:0|intcomma }} {{ currency }}</span></div>
+        {% endif %}
+        {% if sale.vat_amount %}
+          <div class="muted"><span>Shu jumladan QQS</span><span>{{ sale.vat_amount|floatformat:0|intcomma }} {{ currency }}</span></div>
+        {% endif %}
+        <div class="total"><span>Chek summasi</span><span>{{ sale.total|floatformat:0|intcomma }} {{ currency }}</span></div>
+        {% if sale.refunded_amount %}
+          <div class="danger-row"><span>Qaytarilgan</span><span>−{{ sale.refunded_amount|floatformat:0|intcomma }} {{ currency }}</span></div>
+          <div class="total"><span>Sof summa</span><span>{{ sale.net_total|floatformat:0|intcomma }} {{ currency }}</span></div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div style="display:flex;flex-direction:column;gap:16px">
+    <div class="card">
+      <div class="card-head"><h2>Ma'lumotlar</h2></div>
+      <div class="card-body">
+        <div class="info-list">
+          <div><span>Filial</span><span>{{ sale.branch.name }}</span></div>
+          <div><span>Kassir</span><span>{{ sale.cashier|default:"—" }}</span></div>
+          <div><span>Mijoz</span><span>
+            {% if sale.customer %}<a href="{% url 'customer_detail' sale.customer.pk %}">{{ sale.customer.full_name }}</a>
+            {% else %}Oddiy xaridor{% endif %}</span></div>
+          <div><span>To'lov turi</span><span class="pay-tag pay-{{ sale.payment_method }}">{{ sale.get_payment_method_display }}</span></div>
+          {% if sale.payment_method == 1 %}
+            <div><span>Berilgan pul</span><span>{{ sale.paid_amount|floatformat:0|intcomma }} {{ currency }}</span></div>
+            <div><span>Qaytim</span><span>{{ sale.change_amount|floatformat:0|intcomma }} {{ currency }}</span></div>
+          {% endif %}
+          <div><span>Foyda</span><span>{{ sale.profit|floatformat:0|intcomma }} {{ currency }}</span></div>
+          {% if sale.note %}<div><span>Izoh</span><span>{{ sale.note }}</span></div>{% endif %}
+        </div>
+      </div>
+    </div>
+
+    {% if can_refund %}
+      <div class="card">
+        <div class="card-head"><h2>Tovarni qaytarish</h2>
+          <span class="sub">qaytarilgan tovar omborga qaytadi</span>
+        </div>
+        <div class="card-body">
+          <form method="post" action="{% url 'sale_refund' sale.pk %}">
+            {% csrf_token %}
+            <div class="refund-rows">
+              {% for item in items %}
+                {% if item.returnable_quantity > 0 %}
+                  <div class="refund-row">
+                    <div>
+                      <div>{{ item.name }}</div>
+                      <div class="muted">{{ item.returnable_quantity|floatformat:0 }} {{ item.unit }} qaytarish mumkin</div>
+                    </div>
+                    <input class="input" type="number" name="qty-{{ item.pk }}" min="0"
+                           max="{{ item.returnable_quantity|floatformat:0 }}" step="1" value="0"
+                           aria-label="{{ item.name }} — qaytariladigan soni">
+                  </div>
+                {% endif %}
+              {% endfor %}
+            </div>
+            <div class="field" style="margin-top:12px">
+              <label for="refundNote">Sabab</label>
+              <input class="input" type="text" id="refundNote" name="note" placeholder="masalan: sifatsiz tovar">
+            </div>
+            <div class="form-actions">
+              <button class="btn btn-primary" type="submit">Qaytarishni rasmiylashtirish</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
