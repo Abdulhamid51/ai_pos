@@ -1,0 +1,33 @@
+<tr class="wb-row">
+  <td>
+    {{ form.id }}
+    {{ form.name }}
+    {{ form.barcode }}
+    {% if form.name.errors %}<div class="field-error">{{ form.name.errors|striptags }}</div>{% endif %}
+  </td>
+  <td>
+    {{ form.product }}
+    {% with how=form.instance.matched_by %}
+      {% if form.instance.pk %}
+        {% if how == "barcode" %}<span class="wb-match exact">shtrix-kod bo'yicha</span>
+        {% elif how == "name" %}<span class="wb-match exact">nomi bo'yicha</span>
+        {% elif how == "semantic" %}<span class="wb-match guess">taxminiy · {{ form.instance.match_score|floatformat:2 }} — tekshiring</span>
+        {% elif how == "manual" %}<span class="wb-match exact">qo'lda tanlangan</span>
+        {% else %}<span class="wb-match none">bazada topilmadi</span>{% endif %}
+      {% endif %}
+    {% endwith %}
+    {% if form.product.errors %}<div class="field-error">{{ form.product.errors|striptags }}</div>{% endif %}
+  </td>
+  <td class="num">{{ form.quantity }}{% if form.quantity.errors %}<div class="field-error">{{ form.quantity.errors|striptags }}</div>{% endif %}</td>
+  <td>{{ form.unit }}</td>
+  <td class="num">{{ form.price }}{% if form.price.errors %}<div class="field-error">{{ form.price.errors|striptags }}</div>{% endif %}</td>
+  {% if kind == 1 %}
+    <td class="num">{{ form.sale_price }}{% if form.sale_price.errors %}<div class="field-error">{{ form.sale_price.errors|striptags }}</div>{% endif %}</td>
+  {% else %}
+    <td hidden>{{ form.sale_price }}</td>
+  {% endif %}
+  <td class="num wb-line">—</td>
+  <td class="num">
+    <label class="row-remove" title="Qatorni o'chirish">{{ form.DELETE }}<span>✕</span></label>
+  </td>
+</tr>

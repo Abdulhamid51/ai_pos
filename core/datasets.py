@@ -25,6 +25,32 @@ MAX_ROWS = 20000
 DEFAULT_DAYS = 180
 
 
+# Har bir to'plamning ustunlari. Shu yerdan ham bo'sh DataFrame yasaladi, ham
+# modelga beriladigan ro'yxat olinadi — ikkinchi nusxa saqlanmaydi.
+COLUMNS = {
+    "cheklar": [
+        "chek_id", "raqam", "sana", "filial", "kassir", "mijoz", "summa_chegirmasiz",
+        "chegirma", "jami", "qqs", "tan_narxi", "tolov_turi", "holat", "qaytarilgan", "foyda",
+    ],
+    "chek_qatorlari": [
+        "chek_id", "chek_raqami", "sana", "filial", "mahsulot", "shtrix_kod",
+        "birlik", "soni", "narx", "tan_narxi", "chegirma", "qaytarilgan_soni",
+        "sof_soni", "tushum", "foyda",
+    ],
+    "mahsulotlar": [
+        "mahsulot_id", "nomi", "shtrix_kod", "filial", "rang", "brend", "davlat",
+        "birlik", "tan_narxi", "narx", "qoldiq", "minimal_qoldiq", "yaroqlilik",
+        "olcham", "material", "jinsi", "mavsum", "faol", "foyda_ulushi", "qoldiq_kam",
+    ],
+    "mijozlar": [
+        "mijoz_id", "ism", "telefon", "chegirma_foiz", "qarz", "qarz_chegarasi", "faol",
+    ],
+    "ombor_harakatlari": [
+        "sana", "mahsulot", "filial", "turi", "ozgarish", "keyingi_qoldiq", "xodim", "izoh",
+    ],
+}
+
+
 def _empty(columns):
     return pd.DataFrame({name: pd.Series(dtype="object") for name in columns})
 
@@ -45,10 +71,7 @@ def sales_frame(user):
         )[:MAX_ROWS]
     )
     if not rows:
-        return _empty([
-            "chek_id", "raqam", "sana", "filial", "kassir", "mijoz", "summa_chegirmasiz",
-            "chegirma", "jami", "qqs", "tan_narxi", "tolov_turi", "holat", "qaytarilgan", "foyda",
-        ])
+        return _empty(COLUMNS["cheklar"])
 
     frame = pd.DataFrame(rows).rename(columns={
         "id": "chek_id", "number": "raqam", "created_at": "sana",
@@ -84,11 +107,7 @@ def sale_items_frame(user):
         )[:MAX_ROWS]
     )
     if not rows:
-        return _empty([
-            "chek_id", "chek_raqami", "sana", "filial", "mahsulot", "shtrix_kod",
-            "birlik", "soni", "narx", "tan_narxi", "chegirma", "qaytarilgan_soni",
-            "sof_soni", "tushum", "foyda",
-        ])
+        return _empty(COLUMNS["chek_qatorlari"])
 
     frame = pd.DataFrame(rows).rename(columns={
         "sale_id": "chek_id", "sale__number": "chek_raqami",
@@ -121,11 +140,7 @@ def products_frame(user):
         )[:MAX_ROWS]
     )
     if not rows:
-        return _empty([
-            "mahsulot_id", "nomi", "shtrix_kod", "filial", "rang", "brend", "davlat",
-            "birlik", "tan_narxi", "narx", "qoldiq", "minimal_qoldiq", "yaroqlilik",
-            "olcham", "material", "jinsi", "mavsum", "faol", "foyda_ulushi", "qoldiq_kam",
-        ])
+        return _empty(COLUMNS["mahsulotlar"])
 
     frame = pd.DataFrame(rows).rename(columns={
         "id": "mahsulot_id", "name": "nomi", "barcode": "shtrix_kod",
@@ -149,14 +164,14 @@ def customers_frame(user):
     """Mijozlar: chegirma va qarz."""
     company = user.company or (user.active_branch.company if user.active_branch else None)
     if not company:
-        return _empty(["mijoz_id", "ism", "telefon", "chegirma_foiz", "qarz", "qarz_chegarasi", "faol"])
+        return _empty(COLUMNS["mijozlar"])
 
     rows = list(
         Customer.objects.filter(company=company)
         .values("id", "full_name", "phone", "discount_percent", "debt", "debt_limit", "is_active")[:MAX_ROWS]
     )
     if not rows:
-        return _empty(["mijoz_id", "ism", "telefon", "chegirma_foiz", "qarz", "qarz_chegarasi", "faol"])
+        return _empty(COLUMNS["mijozlar"])
 
     frame = pd.DataFrame(rows).rename(columns={
         "id": "mijoz_id", "full_name": "ism", "phone": "telefon",
@@ -180,7 +195,7 @@ def movements_frame(user):
         )[:MAX_ROWS]
     )
     if not rows:
-        return _empty(["sana", "mahsulot", "filial", "turi", "ozgarish", "keyingi_qoldiq", "xodim", "izoh"])
+        return _empty(COLUMNS["ombor_harakatlari"])
 
     frame = pd.DataFrame(rows).rename(columns={
         "created_at": "sana", "product__name": "mahsulot",
@@ -237,8 +252,17 @@ DATASETS = {
 
 
 def catalog():
-    """Modelning tizim ko'rsatmasiga qo'shiladigan qisqa ro'yxat."""
-    return "\n".join(f"- {name}: {meta['description']}" for name, meta in DATASETS.items())
+    """Tizim ko'rsatmasiga qo'shiladigan ro'yxat: tavsif va ustun nomlari.
+
+    Ustunlar shu yerda berilgani uchun model ko'p holatda `toplamni_korish`
+    chaqirmasdan to'g'ridan-to'g'ri kod yozadi — bu bitta API chaqiruvini
+    tejaydi.
+    """
+    lines = []
+    for name, meta in DATASETS.items():
+        lines.append(f"- {name}: {meta['description']}")
+        lines.append(f"  ustunlar: {', '.join(COLUMNS[name])}")
+    return "\n".join(lines)
 
 
 def load(name, user):
@@ -249,16 +273,22 @@ def load(name, user):
     return meta["loader"](user)
 
 
-def describe(name, user, sample=5):
+def describe(name, user, sample=3):
     """Ustunlar, turlari va bir nechta namuna qator — model kod yozishdan oldin ko'radi."""
     frame = load(name, user)
     columns = [
         {"ustun": column, "turi": str(frame[column].dtype)}
         for column in frame.columns
     ]
+    # Uzun qiymatlar kesiladi — namuna qiymat formatini ko'rsatish uchun,
+    # ma'lumotni uzatish uchun emas.
+    rows = [
+        {key: (value[:40] + "…" if len(value) > 40 else value) for key, value in row.items()}
+        for row in frame.head(sample).astype(str).to_dict(orient="records")
+    ]
     return {
         "toplam": name,
         "qatorlar_soni": int(len(frame)),
         "ustunlar": columns,
-        "namuna": frame.head(sample).astype(str).to_dict(orient="records"),
+        "namuna": rows,
     }

@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block title %}Ta'minotchilar · AI POS{% endblock %}
+
+{% block topbar_extra %}
+  <span class="chip">{{ total }} ta ta'minotchi</span>
+  <a class="btn btn-primary" href="{% url 'supplier_create' %}">+ Yangi ta'minotchi</a>
+{% endblock %}
+
+{% block content %}
+
+{% if total_debt %}
+  <div class="alert warning">
+    Ta'minotchilar oldidagi jami qarz: <strong>{{ total_debt|floatformat:0|intcomma }} {{ currency }}</strong>
+  </div>
+{% endif %}
+
+<div class="card">
+  <div class="toolbar">
+    <form class="toolbar-filters" method="get">
+      <div class="search-box grow">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.2-3.2"/></svg>
+        <input type="search" name="q" value="{{ query }}" placeholder="Nomi, telefon yoki STIR">
+      </div>
+      <button class="btn" type="submit">Qidirish</button>
+      {% if query %}<a class="btn" href="{% url 'supplier_list' %}">Tozalash</a>{% endif %}
+    </form>
+  </div>
+
+  <div class="table-wrap">
+    <table class="data">
+      <thead>
+        <tr><th>Ta'minotchi</th><th>Telefon</th><th>STIR</th>
+            <th class="num">Nakladnoylar</th><th class="num">Bizning qarz</th><th>Holat</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for s in suppliers %}
+          <tr>
+            <td>
+              <a href="{% url 'supplier_detail' s.pk %}">{{ s.name }}</a>
+              {% if s.address %}<div class="muted">{{ s.address }}</div>{% endif %}
+            </td>
+            <td class="muted">{{ s.phone|default:"—" }}</td>
+            <td class="muted">{{ s.tin|default:"—" }}</td>
+            <td class="num">{{ s.waybill_count }}</td>
+            <td class="num">
+              {% if s.debt %}<span class="stock low">{{ s.debt|floatformat:0|intcomma }}</span>
+              {% else %}<span class="muted">—</span>{% endif %}
+            </td>
+            <td><span class="status {% if s.is_active %}on{% else %}off{% endif %}">{% if s.is_active %}Faol{% else %}Nofaol{% endif %}</span></td>
+            <td class="num"><a class="btn btn-sm" href="{% url 'supplier_edit' s.pk %}">Tahrirlash</a></td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="7">
+            <div class="empty">
+              <p>{% if query %}Mos ta'minotchi topilmadi.{% else %}Hali ta'minotchi qo'shilmagan.{% endif %}</p>
+              <a class="btn btn-primary" href="{% url 'supplier_create' %}">Ta'minotchi qo'shish</a>
+            </div>
+          </td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if page_obj.has_other_pages %}
+    <div class="pagination">
+      {% if page_obj.has_previous %}
+        <a class="btn btn-sm" href="{% querystring page=page_obj.previous_page_number %}">← Oldingi</a>
+      {% endif %}
+      <span class="muted">{{ page_obj.number }} / {{ page_obj.paginator.num_pages }}</span>
+      {% if page_obj.has_next %}
+        <a class="btn btn-sm" href="{% querystring page=page_obj.next_page_number %}">Keyingi →</a>
+      {% endif %}
+    </div>
+  {% endif %}
+</div>
+{% endblock %}

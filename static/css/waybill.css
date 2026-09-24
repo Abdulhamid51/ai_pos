@@ -1,0 +1,118 @@
+/* ===========================================================================
+   Qabul va nakladnoylar
+   Ranglar style.css dagi o'zgaruvchilardan olinadi.
+   =========================================================================== */
+
+/* Yuklash formasi — bir qatorda. */
+.wb-upload { display: flex; gap: 14px; align-items: flex-end; flex-wrap: wrap; }
+.wb-upload .field { margin: 0; }
+.wb-upload .field:first-child { min-width: 150px; }
+.wb-upload .field .input { width: 100%; }
+.wb-upload .field.grow { flex: 1; min-width: 240px; }
+
+/* Tur bo'yicha yorliqlar — `.segmented` ko'rinishida, lekin havolalar bilan. */
+.wb-tabs {
+  display: inline-flex;
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 3px;
+  gap: 3px;
+}
+.wb-tabs a {
+  padding: 6px 13px;
+  border-radius: 7px;
+  font-size: 13px;
+  color: var(--text-2);
+  text-decoration: none;
+}
+.wb-tabs a:hover { color: var(--text); }
+.wb-tabs a[aria-current="page"] {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow-sm);
+  font-weight: 550;
+}
+
+/* Holat belgisi. */
+.wb-status {
+  display: inline-block;
+  font-size: 12px; font-weight: 550;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+}
+.wb-status.s1 { color: var(--warning); border-color: var(--warning); }
+.wb-status.s2 { color: var(--good); border-color: var(--good); }
+.wb-status.s3 { color: var(--text-3); }
+
+/* Tahrirlash: hujjat tepada, jadval to'liq kenglikda, amallar pastda.
+   Ma'lumot kiritish jadvaliga kenglik kerak — yon ustun uni siqib qo'yardi. */
+.wb-stack { display: flex; flex-direction: column; gap: 18px; }
+.wb-head-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 12px 16px;
+  align-items: end;
+}
+.wb-head-grid .field { margin: 0; }
+.wb-check { margin: 0 0 8px; }
+.wb-hint { margin-top: 12px; font-size: 13px; }
+
+.wb-bottom {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 18px;
+  align-items: start;
+}
+.wb-summary { display: flex; gap: 24px; align-items: flex-end; flex-wrap: wrap; }
+.wb-summary .sum-list { flex: 1; min-width: 220px; }
+
+/* Faqat o'qish rejimi: chapda qatorlar, o'ngda hujjat. */
+.wb-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 290px;
+  gap: 18px;
+  align-items: start;
+}
+.wb-side { display: flex; flex-direction: column; gap: 18px; }
+
+.wb-items th, .wb-items td { padding: 8px 6px; }
+.wb-items th:first-child, .wb-items td:first-child { padding-left: 16px; }
+.wb-items td { vertical-align: top; }
+.wb-items .input { min-width: 0; width: 100%; padding: 6px 8px; font-size: 13px; }
+.wb-items td:nth-child(1) .input { min-width: 170px; }
+/* `<select>` eng uzun variant matni bo'yicha kengayadi — enini qat'iy beramiz. */
+.wb-items select.input { width: 240px; text-overflow: ellipsis; }
+.wb-items td.num .input { width: 86px; text-align: right; }
+.wb-items td:nth-child(4) .input { width: 54px; }
+/* Shtrix-kod — nom ostida, ikkinchi darajali. */
+.wb-items input[name$="-barcode"] { margin-top: 5px; font-size: 12px; color: var(--text-2); }
+.wb-items input[name$="-barcode"]::placeholder { color: var(--text-3); }
+.wb-line { white-space: nowrap; padding-top: 14px !important; font-variant-numeric: tabular-nums; }
+
+/* O'chirilgan qator xira ko'rinadi — saqlanganda bazadan olib tashlanadi. */
+.wb-row.removed td { opacity: .35; }
+.wb-row .row-remove { cursor: pointer; display: inline-flex; align-items: center; }
+.wb-row .row-remove input { display: none; }
+
+/* Mahsulotga qanday moslangani. */
+.wb-match { display: block; margin-top: 5px; font-size: 11.5px; }
+.wb-match.exact { color: var(--good); }
+.wb-match.guess { color: var(--warning); }
+.wb-match.none { color: var(--danger); }
+
+.wb-foot { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; font-size: 13px; }
+.wb-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.wb-preview {
+  display: block;
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  margin-bottom: 10px;
+}
+
+@media (max-width: 1100px) {
+  .wb-layout, .wb-bottom { grid-template-columns: 1fr; }
+}

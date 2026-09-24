@@ -1,4 +1,5 @@
 import json
+import time
 from datetime import timedelta
 from decimal import Decimal
 
@@ -8,14 +9,14 @@ from django.contrib.auth.decorators import login_required, user_passes_test
 from django.contrib.humanize.templatetags.humanize import intcomma
 from django.core.paginator import Paginator
 from django.db import transaction
-from django.db.models import Q, Sum
+from django.db.models import Count, Q, Sum
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
-from . import ai, reporting
+from . import ai, documents, reporting, services
 from .forms import (
     BranchForm,
     BranchSwitchForm,
@@ -26,18 +27,27 @@ from .forms import (
     ProductEditForm,
     StaffForm,
     StockAdjustForm,
+    SupplierForm,
     VariantFormSet,
+    WaybillHeaderForm,
+    WaybillItemFormSet,
+    WaybillSaleForm,
+    WaybillUploadForm,
 )
 from .models import (
     TRADE_TYPE_FIELDS,
     Branch,
+    Conversation,
     Color,
     Customer,
+    Message,
     PaymentMethod,
     Product,
     Sale,
     StockMovement,
+    Supplier,
     User,
+    Waybill,
     apply_stock,
 )
 from .services import CheckoutError, checkout, pay_debt, refund
@@ -50,6 +60,9 @@ seller_required = user_passes_test(lambda u: u.is_authenticated and u.can_sell()
 
 # Ichki sahifalar — mijoz rolidagi foydalanuvchiga ochilmaydi.
 staff_required = user_passes_test(lambda u: u.is_authenticated and u.is_xodim)
+
+# Tovar qabul qilish va ta'minotchilar — direktor va ta'minotchi uchun.
+receiver_required = user_passes_test(lambda u: u.is_authenticated and u.can_receive())
 
 
 def _back(request, panel=""):
@@ -125,14 +138,47 @@ def dashboard(request):
 # AI yordamchi
 # ---------------------------------------------------------------------------
 
-# Suhbat tarixi Google tomonida saqlanadi — bizda faqat oxirgi javob id'si turadi.
-CHAT_SESSION_KEY = "ai_chat_id"
+# Ro'yxatda ko'rsatiladigan suhbatlar soni.
+CHAT_LIST_LIMIT = 50
+
+
+def _title_of(message):
+    """Suhbat sarlavhasi — birinchi savoldan olinadi."""
+    title = " ".join(message.split())
+    return title[:70] + "…" if len(title) > 70 else title
+
+
+def _message_payload(message):
+    """Xabarni brauzerga beriladigan ko'rinishga keltiradi."""
+    data = {
+        "role": {1: "user", 2: "ai", 3: "error"}[message.role],
+        "text": message.text,
+        "sources": message.sources or [],
+        "tables": message.tables or [],
+    }
+    if message.role == Message.Role.AI:
+        data["stats"] = {
+            "tokens": message.total_tokens,
+            "input": message.input_tokens,
+            "output": message.output_tokens,
+            "seconds": round(message.seconds, 1),
+            "tools": message.tool_calls,
+        }
+    return data
 
 
 @login_required
 @staff_required
-def chat(request):
-    """Bosh sahifa — AI yordamchi bilan suhbat."""
+def chat(request, pk=None):
+    """AI yordamchi. `pk` berilsa — saqlangan suhbat ochiladi."""
+    conversations = Conversation.objects.filter(user=request.user)[:CHAT_LIST_LIMIT]
+
+    conversation = None
+    history = []
+    if pk:
+        conversation = get_object_or_404(Conversation, pk=pk, user=request.user)
+        history = [_message_payload(m) for m in conversation.messages.all()]
+
     company = _company_of(request.user)
     return render(request, "core/chat.html", {
         "page_title": "AI yordamchi",
@@ -140,48 +186,486 @@ def chat(request):
         "branch": request.user.active_branch,
         "model_name": settings.GEMINI_MODEL,
         "ai_ready": ai.is_configured(),
+        "conversations": conversations,
+        "conversation": conversation,
+        "history": history,   # json_script shablonda o'zi JSON qiladi
     })
+
+
+# Chatdagi buyruqlar: fayl bilan birga yuboriladi.
+CHAT_COMMANDS = {"/qabul": Waybill.Kind.QABUL, "/sotuv": Waybill.Kind.SOTUV}
+
+
+def _conversation_for(request, payload, title):
+    conversation_id = payload.get("conversation")
+    if conversation_id:
+        return get_object_or_404(Conversation, pk=conversation_id, user=request.user)
+    return Conversation.objects.create(user=request.user, title=_title_of(title))
+
+
+def _chat_command(request, payload, command, text, uploaded):
+    """`/qabul` va `/sotuv`: faylni o'qib, qoralama nakladnoy yaratadi.
+
+    Bazaga hech narsa yozilmaydi — javobda ko'rib chiqish sahifasiga havola
+    beriladi, tasdiqlash o'sha yerda.
+    """
+    kind = CHAT_COMMANDS.get(command)
+    label = uploaded.name if uploaded else ""
+    conversation = _conversation_for(request, payload, text or f"Nakladnoy: {label}")
+    base = {
+        "conversation": conversation.pk,
+        "title": conversation.title,
+        "url": reverse("chat_detail", args=[conversation.pk]),
+    }
+
+    def reply(message_text, role=Message.Role.AI, **extra):
+        message = Message.objects.create(
+            conversation=conversation, role=role, text=message_text, **extra
+        )
+        conversation.save(update_fields=["updated_at"])
+        data = _message_payload(message)
+        if role == Message.Role.XATO:
+            return JsonResponse({**base, "error": message_text}, status=400)
+        return JsonResponse({**base, **data, "reply": message_text})
+
+    user_text = f"{text or command} 📎 {label}".strip() if uploaded else text
+    Message.objects.create(conversation=conversation, role=Message.Role.FOYDALANUVCHI, text=user_text)
+
+    if kind is None:
+        return reply(
+            "Fayl bilan birga buyruq yozing: /qabul — tovar qabul qilish, "
+            "/sotuv — nakladnoy bo'yicha sotish.",
+            role=Message.Role.XATO,
+        )
+    if uploaded is None:
+        return reply(
+            f"{command} uchun nakladnoy faylini biriktiring (rasm, PDF, Excel yoki CSV).",
+            role=Message.Role.XATO,
+        )
+
+    started = time.monotonic()
+    try:
+        waybill, stats, error = start_waybill(request.user, kind, uploaded)
+    except (services.WaybillError, documents.DocumentError) as error:
+        return reply(str(error), role=Message.Role.XATO)
+
+    link = reverse("waybill_detail", args=[waybill.pk])
+    action = "qabul" if kind == Waybill.Kind.QABUL else "sotuv"
+
+    if error:
+        text_out = (
+            f"Faylni o'qib bo'lmadi: {error}\n"
+            f"Qoralama saqlandi — qatorlarni qo'lda kiritishingiz mumkin."
+        )
+    else:
+        lines = [f"Nakladnoy o'qildi: {stats['items']} ta qator, {stats['matched']} tasi bazadagi mahsulotga moslandi."]
+        if waybill.number:
+            lines.append(f"Raqami: {waybill.number}" + (f", sanasi: {waybill.doc_date:%d.%m.%Y}" if waybill.doc_date else ""))
+        if waybill.supplier:
+            lines.append(f"Ta'minotchi: {waybill.supplier.name}")
+        elif waybill.supplier_name and kind == Waybill.Kind.QABUL:
+            lines.append(f"Hujjatdagi ta'minotchi ro'yxatda yo'q: {waybill.supplier_name}")
+        unmatched = stats["items"] - stats["matched"]
+        if unmatched:
+            lines.append(
+                f"{unmatched} ta qator bazada topilmadi — "
+                + ("tasdiqlashda yangi mahsulot bo'ladi, sotuv narxini kiriting." if kind == Waybill.Kind.QABUL
+                   else "sotishdan oldin mahsulotni tanlang.")
+            )
+        for warning in stats["warnings"]:
+            lines.append(f"Diqqat: {warning}")
+        lines.append(f"Hali hech narsa o'zgarmadi — {action}ni tekshirib tasdiqlang.")
+        text_out = "\n".join(lines)
+
+    items = list(waybill.items.select_related("product"))
+    table = {
+        "sarlavha": f"Nakladnoy №{waybill.number or waybill.pk} · qoralama",
+        "ustunlar": ["Hujjatdagi nomi", "Bazadagi mahsulot", "Soni", "Narxi", "Jami"],
+        "qatorlar": [
+            [item.name, str(item.product) if item.product else "— topilmadi —",
+             float(item.quantity), float(item.price), float(item.line_total)]
+            for item in items
+        ],
+        "jami": len(items),
+        "havola": link,
+        "havola_matni": "Ko'rib chiqish va tasdiqlash →",
+    }
+
+    return reply(
+        text_out,
+        sources=[f"Nakladnoy: {label}"],
+        tables=[table] if items else [],
+        input_tokens=waybill.parse_tokens,
+        elapsed_ms=int((time.monotonic() - started) * 1000),
+    )
 
 
 @login_required
 @staff_required
 @require_POST
 def chat_send(request):
-    """Savolni modelga uzatadi, javobni JSON ko'rinishida qaytaradi."""
-    try:
-        payload = json.loads(request.body or b"{}")
-    except ValueError:
-        return JsonResponse({"error": "So'rov formati noto'g'ri."}, status=400)
+    """Savolni modelga uzatadi, savol va javobni bazaga yozadi.
 
-    message = (payload.get("message") or "").strip()
-    if not message:
+    Fayl biriktirilgan bo'lsa so'rov multipart ko'rinishida keladi va
+    `/qabul` yoki `/sotuv` buyrug'i nakladnoy sifatida qayta ishlanadi.
+    """
+    if request.content_type.startswith("multipart/"):
+        payload = request.POST
+        uploaded = request.FILES.get("file")
+    else:
+        try:
+            payload = json.loads(request.body or b"{}")
+        except ValueError:
+            return JsonResponse({"error": "So'rov formati noto'g'ri."}, status=400)
+        uploaded = None
+
+    text = (payload.get("message") or "").strip()
+    command = text.split()[0].lower() if text.startswith("/") else ""
+    if command in CHAT_COMMANDS or uploaded:
+        return _chat_command(request, payload, command, text, uploaded)
+
+    if not text:
         return JsonResponse({"error": "Xabar bo'sh."}, status=400)
-    if len(message) > 2000:
+    if len(text) > 2000:
         return JsonResponse({"error": "Xabar juda uzun — 2000 belgidan oshmasin."}, status=400)
 
+    # Suhbat birinchi savol yuborilganda yaratiladi — bo'sh suhbat qolmaydi.
+    conversation = _conversation_for(request, payload, text)
+
+    Message.objects.create(
+        conversation=conversation, role=Message.Role.FOYDALANUVCHI, text=text
+    )
+
+    base = {
+        "conversation": conversation.pk,
+        "title": conversation.title,
+        "url": reverse("chat_detail", args=[conversation.pk]),
+    }
+
     try:
-        reply, interaction_id, sources, tables = ai.chat_reply(
-            message,
-            request.user,
-            previous_id=request.session.get(CHAT_SESSION_KEY),
+        result = ai.chat_reply(
+            text, request.user, previous_id=conversation.last_interaction_id or None
         )
     except ai.AIError as error:
-        # 503: xizmat vaqtincha ishlamayapti. POS'ning qolgan qismi ishlayveradi.
-        return JsonResponse({"error": str(error)}, status=503)
+        # Xato ham tarixda qoladi — keyin nima bo'lganini ko'rish mumkin.
+        Message.objects.create(
+            conversation=conversation, role=Message.Role.XATO, text=str(error)
+        )
+        conversation.save(update_fields=["updated_at"])
+        return JsonResponse({**base, "error": str(error)}, status=503)
 
-    request.session[CHAT_SESSION_KEY] = interaction_id
-    # `sources` — model qaysi ma'lumotdan foydalangani; `tables` — pandas
-    # tahlilining katta natijasi, u javob matnida emas, jadval bo'lib ko'rsatiladi.
-    return JsonResponse({"reply": reply, "sources": sources, "tables": tables})
+    conversation.last_interaction_id = result.interaction_id
+    conversation.save(update_fields=["last_interaction_id", "updated_at"])
+
+    message = Message.objects.create(
+        conversation=conversation,
+        role=Message.Role.AI,
+        text=result.text,
+        sources=result.sources,
+        tables=result.tables,
+        input_tokens=result.input_tokens,
+        output_tokens=result.output_tokens,
+        elapsed_ms=result.elapsed_ms,
+        tool_calls=result.tool_calls,
+    )
+
+    return JsonResponse({**base, **_message_payload(message), "reply": result.text})
 
 
 @login_required
 @staff_required
 @require_POST
-def chat_reset(request):
-    """Yangi suhbat — eski tarixga bog'lanish uziladi."""
-    request.session.pop(CHAT_SESSION_KEY, None)
-    return JsonResponse({"ok": True})
+def chat_delete(request, pk):
+    """Suhbatni o'chiradi. Xabarlar ham birga ketadi (CASCADE)."""
+    conversation = get_object_or_404(Conversation, pk=pk, user=request.user)
+    conversation.delete()
+    if request.headers.get("X-Requested-With") == "fetch":
+        return JsonResponse({"ok": True})
+    return redirect("chat")
+
+
+# ---------------------------------------------------------------------------
+# Ta'minotchilar
+# ---------------------------------------------------------------------------
+
+@login_required
+@receiver_required
+def supplier_list(request):
+    company = _company_of(request.user)
+    # `annotate` dan keyin Meta.ordering kafolatlanmaydi — tartib aniq beriladi,
+    # aks holda sahifalashda qatorlar sahifalar orasida takrorlanishi mumkin.
+    suppliers = Supplier.objects.filter(company=company).annotate(
+        waybill_count=Count("waybills")
+    ).order_by("name")
+
+    query = request.GET.get("q", "").strip()
+    if query:
+        suppliers = suppliers.filter(
+            Q(name__icontains=query) | Q(phone__icontains=query) | Q(tin__icontains=query)
+        )
+
+    page = Paginator(suppliers, 30).get_page(request.GET.get("page"))
+    total_debt = Supplier.objects.filter(company=company).aggregate(total=Sum("debt"))["total"]
+
+    return render(request, "core/supplier_list.html", {
+        "page_title": "Ta'minotchilar",
+        "currency": settings.POS_CURRENCY,
+        "page_obj": page,
+        "suppliers": page.object_list,
+        "total": suppliers.count(),
+        "total_debt": total_debt or 0,
+        "query": query,
+    })
+
+
+@login_required
+@receiver_required
+def supplier_edit(request, pk=None):
+    company = _company_of(request.user)
+    instance = get_object_or_404(Supplier, pk=pk, company=company) if pk else None
+
+    if request.method == "POST":
+        form = SupplierForm(request.POST, instance=instance, company=company)
+        if form.is_valid():
+            supplier = form.save(commit=False)
+            supplier.company = company
+            supplier.save()
+            messages.success(request, f"{supplier.name} saqlandi.")
+            # Nakladnoydan kelgan bo'lsa — o'sha yerga qaytamiz.
+            back = request.POST.get("qaytish", "")
+            if back.startswith("/qabul/"):
+                return redirect(back)
+            return redirect("supplier_detail", pk=supplier.pk)
+    else:
+        form = SupplierForm(
+            instance=instance, company=company,
+            initial={"name": request.GET.get("nom", "")[:150]} if not instance else None,
+        )
+
+    return render(request, "core/supplier_form.html", {
+        "page_title": "Ta'minotchini tahrirlash" if instance else "Yangi ta'minotchi",
+        "form": form,
+        "instance": instance,
+        "back": request.GET.get("qaytish") or request.POST.get("qaytish", ""),
+    })
+
+
+@login_required
+@receiver_required
+def supplier_detail(request, pk):
+    company = _company_of(request.user)
+    supplier = get_object_or_404(Supplier, pk=pk, company=company)
+    waybills = supplier.waybills.select_related("branch").prefetch_related("items")[:50]
+    return render(request, "core/supplier_detail.html", {
+        "page_title": supplier.name,
+        "currency": settings.POS_CURRENCY,
+        "supplier": supplier,
+        "waybills": waybills,
+    })
+
+
+# ---------------------------------------------------------------------------
+# Nakladnoylar
+# ---------------------------------------------------------------------------
+
+LEGAL_FORMS = ("mchj", "ooo", "ооо", "xk", "ик", "ип", "ao", "ат", "llc", "ltd")
+
+
+def _org_key(name):
+    """Tashkilot nomini solishtirish uchun: qo'shtirnoq va huquqiy shakl olib tashlanadi."""
+    cleaned = "".join(ch for ch in (name or "").lower() if ch.isalnum() or ch.isspace())
+    words = [w for w in cleaned.split() if w not in LEGAL_FORMS]
+    return " ".join(words)
+
+
+def _guess_supplier(company, name):
+    """Hujjatdagi nom bo'yicha mavjud ta'minotchini topadi. Topilmasa — None."""
+    key = _org_key(name)
+    if not key:
+        return None
+    for supplier in Supplier.objects.filter(company=company, is_active=True):
+        other = _org_key(supplier.name)
+        if other and (other == key or other in key or key in other):
+            return supplier
+    return None
+
+
+def _can_handle(user, kind):
+    """Qabulni ta'minotchi/direktor, sotuvni sotish huquqi borlar bajaradi."""
+    return user.can_receive() if kind == Waybill.Kind.QABUL else user.can_sell()
+
+
+def start_waybill(user, kind, uploaded):
+    """Faylni saqlaydi va AI bilan o'qiydi. Sahifa ham, chat ham shuni chaqiradi.
+
+    Qaytadi: (waybill, stats, xato_matni). O'qishda xato bo'lsa ham qoralama
+    saqlanadi — foydalanuvchi qatorlarni qo'lda kiritishi mumkin.
+    """
+    branch = user.active_branch
+    if branch is None:
+        raise services.WaybillError("Faol filial tanlanmagan.")
+    if not _can_handle(user, kind):
+        raise services.WaybillError("Bu amal uchun huquqingiz yo'q.")
+
+    documents.check_file(uploaded)
+    waybill = Waybill.objects.create(
+        branch=branch, kind=kind, created_by=user,
+        file=uploaded, file_name=uploaded.name[:255],
+    )
+
+    try:
+        stats = documents.parse_waybill(waybill)
+    except (documents.DocumentError, ai.AIError) as error:
+        return waybill, None, str(error)
+
+    if kind == Waybill.Kind.QABUL and waybill.supplier_name:
+        supplier = _guess_supplier(branch.company, waybill.supplier_name)
+        if supplier:
+            waybill.supplier = supplier
+            waybill.save(update_fields=["supplier"])
+
+    return waybill, stats, None
+
+
+@login_required
+@staff_required
+def waybill_list(request):
+    branches = request.user.visible_branches()
+    waybills = (
+        Waybill.objects.filter(branch__in=branches)
+        .select_related("branch", "supplier", "customer", "created_by")
+        .prefetch_related("items")
+    )
+
+    kind = request.GET.get("tur", "qabul")
+    if kind == "sotuv":
+        waybills = waybills.filter(kind=Waybill.Kind.SOTUV)
+    elif kind == "qabul":
+        waybills = waybills.filter(kind=Waybill.Kind.QABUL)
+
+    status = request.GET.get("holat", "")
+    if status.isdigit():
+        waybills = waybills.filter(status=int(status))
+
+    page = Paginator(waybills, 30).get_page(request.GET.get("page"))
+    initial_kind = Waybill.Kind.SOTUV if kind == "sotuv" else Waybill.Kind.QABUL
+
+    return render(request, "core/waybill_list.html", {
+        "page_title": "Qabul va nakladnoylar",
+        "currency": settings.POS_CURRENCY,
+        "page_obj": page,
+        "waybills": page.object_list,
+        "kind": kind,
+        "status": status,
+        "statuses": Waybill.Status.choices,
+        "upload_form": WaybillUploadForm(initial={"kind": initial_kind}),
+        "can_receive": request.user.can_receive(),
+    })
+
+
+@login_required
+@staff_required
+@require_POST
+def waybill_upload(request):
+    form = WaybillUploadForm(request.POST, request.FILES)
+    if not form.is_valid():
+        messages.error(request, "Fayl tanlanmagan.")
+        return redirect("waybill_list")
+
+    try:
+        waybill, stats, error = start_waybill(
+            request.user, form.cleaned_data["kind"], form.cleaned_data["file"]
+        )
+    except (services.WaybillError, documents.DocumentError) as error:
+        messages.error(request, str(error))
+        return redirect("waybill_list")
+
+    if error:
+        messages.warning(request, f"Faylni o'qib bo'lmadi: {error} Qatorlarni qo'lda kiriting.")
+    else:
+        messages.success(
+            request,
+            f"{stats['items']} ta qator o'qildi, {stats['matched']} tasi mahsulotga moslandi. "
+            f"Tekshirib, tasdiqlang.",
+        )
+        for warning in stats["warnings"]:
+            messages.warning(request, warning)
+    return redirect("waybill_detail", pk=waybill.pk)
+
+
+@login_required
+@staff_required
+def waybill_detail(request, pk):
+    waybill = get_object_or_404(
+        Waybill.objects.select_related("branch", "supplier", "customer", "sale"),
+        pk=pk, branch__in=request.user.visible_branches(),
+    )
+    if not _can_handle(request.user, waybill.kind):
+        messages.error(request, "Bu nakladnoy bilan ishlash huquqingiz yo'q.")
+        return redirect("waybill_list")
+
+    company = waybill.branch.company
+    editable = waybill.is_draft
+
+    header = WaybillHeaderForm(
+        request.POST or None, instance=waybill, company=company
+    ) if editable else None
+    formset = WaybillItemFormSet(
+        request.POST or None, instance=waybill, prefix="items",
+        form_kwargs={"branch": waybill.branch},
+    ) if editable else None
+    sale_form = WaybillSaleForm(request.POST or None) if waybill.kind == Waybill.Kind.SOTUV else None
+
+    if request.method == "POST" and editable:
+        action = request.POST.get("action", "save")
+
+        if action == "cancel":
+            waybill.status = Waybill.Status.BEKOR
+            waybill.save(update_fields=["status"])
+            messages.info(request, "Nakladnoy bekor qilindi. Qoldiqqa tegilmadi.")
+            return redirect("waybill_list")
+
+        if header.is_valid() and formset.is_valid():
+            header.save()
+            formset.save()
+
+            if action != "confirm":
+                messages.success(request, "O'zgarishlar saqlandi.")
+                return redirect("waybill_detail", pk=waybill.pk)
+
+            try:
+                if waybill.kind == Waybill.Kind.QABUL:
+                    services.confirm_receipt(waybill, request.user)
+                    messages.success(request, "Qabul tasdiqlandi — qoldiq yangilandi.")
+                    return redirect("waybill_detail", pk=waybill.pk)
+
+                if sale_form.is_valid():
+                    waybill.refresh_from_db()
+                    confirmed = services.confirm_sale(
+                        waybill, request.user,
+                        payment_method=sale_form.cleaned_data["payment_method"],
+                        customer=waybill.customer,
+                    )
+                    messages.success(request, f"Sotuv tasdiqlandi — chek №{confirmed.sale.number}.")
+                    return redirect("sale_detail", pk=confirmed.sale.pk)
+            except services.WaybillError as error:
+                messages.error(request, str(error))
+        else:
+            messages.error(request, "Formada xatolar bor — belgilangan maydonlarni tekshiring.")
+
+    items = list(waybill.items.select_related("product"))
+    return render(request, "core/waybill_detail.html", {
+        "page_title": str(waybill),
+        "currency": settings.POS_CURRENCY,
+        "waybill": waybill,
+        "editable": editable,
+        "header": header,
+        "formset": formset,
+        "sale_form": sale_form,
+        "items": items,
+        "total": sum((item.line_total for item in items), Decimal("0")),
+        "unmatched": sum(1 for item in items if item.product_id is None),
+    })
 
 
 # ---------------------------------------------------------------------------

@@ -7,7 +7,9 @@ mantiq turadi — shunda bir xil qoida ham kassada, ham testlarda ishlaydi.
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 from django.db import transaction
-from django.db.models import Max
+from django.db.models import F, Max
+
+from django.utils import timezone
 
 from .models import (
     Customer,
@@ -16,6 +18,8 @@ from .models import (
     Sale,
     SaleItem,
     StockMovement,
+    Supplier,
+    Waybill,
     apply_stock,
 )
 
@@ -292,3 +296,135 @@ def pay_debt(*, customer, amount, user, branch=None, note=""):
     return CustomerPayment.objects.create(
         customer=locked, branch=branch, user=user, amount=amount, note=note[:255]
     )
+
+
+# ---------------------------------------------------------------------------
+# Nakladnoylarni tasdiqlash
+# ---------------------------------------------------------------------------
+
+class WaybillError(Exception):
+    """Nakladnoyni tasdiqlab bo'lmadi — sabab foydalanuvchiga ko'rsatiladi."""
+
+
+def _locked_draft(waybill, kind):
+    """Nakladnoyni qulflab oladi: ikki kishi bir vaqtda tasdiqlay olmasin."""
+    locked = Waybill.objects.select_for_update().get(pk=waybill.pk)
+    if locked.status != Waybill.Status.QORALAMA:
+        raise WaybillError("Nakladnoy allaqachon tasdiqlangan yoki bekor qilingan.")
+    if locked.kind != kind:
+        raise WaybillError("Nakladnoy turi mos emas.")
+    return locked
+
+
+def _unit_choice(value):
+    """Hujjatdagi birlikni mahsulotning o'lchov birligiga keltiradi."""
+    allowed = {choice for choice, _ in Product.Unit.choices}
+    return value if value in allowed else Product.Unit.DONA
+
+
+@transaction.atomic
+def confirm_receipt(waybill, user):
+    """Qabul nakladnoyini tasdiqlaydi: qoldiq oshadi, tan narxi yangilanadi.
+
+    Mahsulotga moslanmagan qatorlar uchun yangi mahsulot yaratiladi — buning
+    uchun qatorda sotuv narxi ko'rsatilgan bo'lishi shart.
+    """
+    waybill = _locked_draft(waybill, Waybill.Kind.QABUL)
+    items = list(waybill.items.select_related("product"))
+    if not items:
+        raise WaybillError("Nakladnoyda qator yo'q.")
+
+    for item in items:
+        if item.quantity <= 0:
+            raise WaybillError(f"\"{item.name}\" — soni noldan katta bo'lishi kerak.")
+        if item.product is None and not item.sale_price:
+            raise WaybillError(
+                f"\"{item.name}\" bazada yo'q — yangi mahsulot uchun sotuv narxini kiriting "
+                f"yoki mavjud mahsulotni tanlang."
+            )
+        if item.product and item.product.branch_id != waybill.branch_id:
+            raise WaybillError(f"\"{item.name}\" boshqa filialning mahsuloti.")
+
+    if waybill.on_credit and waybill.supplier is None:
+        raise WaybillError("Qarzga olish uchun ta'minotchini tanlang.")
+
+    note = f"Nakladnoy {waybill.number or waybill.pk}"
+    for item in items:
+        product = item.product
+        if product is None:
+            product = Product.objects.create(
+                branch=waybill.branch,
+                name=item.name,
+                barcode=item.barcode,
+                unit=_unit_choice(item.unit),
+                cost_price=money(item.price),
+                price=money(item.sale_price),
+            )
+            item.product = product
+            item.save(update_fields=["product"])
+        elif item.price > 0 and product.cost_price != item.price:
+            product.cost_price = money(item.price)
+            product.save(update_fields=["cost_price", "updated_at"])
+
+        apply_stock(product, item.quantity, StockMovement.Kind.KIRIM, user=user, note=note)
+
+    if waybill.on_credit:
+        Supplier.objects.filter(pk=waybill.supplier_id).update(
+            debt=F("debt") + money(sum(i.line_total for i in items))
+        )
+
+    waybill.status = Waybill.Status.TASDIQLANGAN
+    waybill.confirmed_by = user
+    waybill.confirmed_at = timezone.now()
+    waybill.save(update_fields=["status", "confirmed_by", "confirmed_at"])
+    return waybill
+
+
+@transaction.atomic
+def confirm_sale(waybill, user, payment_method, customer=None, paid_amount=None):
+    """Sotuv nakladnoyini tasdiqlaydi — oddiy kassa orqali chek yaratiladi.
+
+    Qoldiq, qarz chegarasi va huquq tekshiruvlari `checkout()` ichida:
+    kassadagi qoidalar bu yerda ham aynan shunday ishlaydi.
+    """
+    waybill = _locked_draft(waybill, Waybill.Kind.SOTUV)
+    items = list(waybill.items.select_related("product"))
+    if not items:
+        raise WaybillError("Nakladnoyda qator yo'q.")
+
+    missing = [item.name for item in items if item.product is None]
+    if missing:
+        raise WaybillError(
+            "Bazada topilmagan tovarlarni sotib bo'lmaydi: " + ", ".join(missing[:5])
+        )
+
+    rows = [
+        {
+            "product": item.product_id,
+            "quantity": item.quantity,
+            # Nakladnoyda narx bo'lmasa — mahsulotning joriy narxi olinadi.
+            "price": item.price if item.price > 0 else None,
+        }
+        for item in items
+    ]
+
+    try:
+        sale = checkout(
+            user=user,
+            branch=waybill.branch,
+            rows=rows,
+            payment_method=payment_method,
+            paid_amount=paid_amount,
+            customer=customer,
+            note=f"Nakladnoy {waybill.number or waybill.pk}",
+        )
+    except CheckoutError as error:
+        raise WaybillError(str(error))
+
+    waybill.sale = sale
+    waybill.customer = customer
+    waybill.status = Waybill.Status.TASDIQLANGAN
+    waybill.confirmed_by = user
+    waybill.confirmed_at = timezone.now()
+    waybill.save(update_fields=["sale", "customer", "status", "confirmed_by", "confirmed_at"])
+    return waybill

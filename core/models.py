@@ -203,6 +203,10 @@ class User(AbstractUser):
         """Filial va xodimlarni boshqarish huquqi — faqat direktor."""
         return self.is_direktor or self.is_superuser
 
+    def can_receive(self):
+        """Tovar qabul qilish va ta'minotchilar bilan ishlash huquqi."""
+        return self.can_manage() or self.role == self.Role.TAMINOTCHI
+
     @property
     def can_switch_branch(self):
         """Filial tanlash faqat ikki va undan ortiq filial biriktirilganda ko'rinadi."""
@@ -730,3 +734,257 @@ class ProductEmbedding(models.Model):
 
     def __str__(self):
         return f"{self.product} · {len(self.vector)} o'lcham"
+
+
+# ---------------------------------------------------------------------------
+# AI suhbatlari
+# ---------------------------------------------------------------------------
+
+class Conversation(models.Model):
+    """AI yordamchi bilan bitta suhbat.
+
+    `last_interaction_id` — Gemini tomonidagi oxirgi javob identifikatori.
+    Suhbat konteksti o'sha yerda saqlanadi, bizda esa xabarlar matni va
+    o'lchovlari turadi.
+    """
+
+    user = models.ForeignKey(
+        "User", verbose_name="Foydalanuvchi", on_delete=models.CASCADE,
+        related_name="conversations",
+    )
+    title = models.CharField("Sarlavha", max_length=120, blank=True)
+    last_interaction_id = models.CharField("Oxirgi javob id", max_length=128, blank=True)
+    created_at = models.DateTimeField("Yaratilgan", auto_now_add=True)
+    updated_at = models.DateTimeField("Yangilangan", auto_now=True, db_index=True)
+
+    class Meta:
+        verbose_name = "AI suhbat"
+        verbose_name_plural = "AI suhbatlar"
+        ordering = ["-updated_at"]
+
+    def __str__(self):
+        return self.title or f"Suhbat #{self.pk}"
+
+    @property
+    def total_tokens(self):
+        """Suhbatga ketgan jami token."""
+        return sum(m.input_tokens + m.output_tokens for m in self.messages.all())
+
+
+class Message(models.Model):
+    """Suhbatdagi bitta xabar: savol, javob yoki xato."""
+
+    class Role(models.IntegerChoices):
+        FOYDALANUVCHI = 1, "Foydalanuvchi"
+        AI = 2, "AI"
+        XATO = 3, "Xato"
+
+    conversation = models.ForeignKey(
+        Conversation, verbose_name="Suhbat", on_delete=models.CASCADE, related_name="messages"
+    )
+    role = models.PositiveSmallIntegerField("Kim", choices=Role.choices)
+    text = models.TextField("Matn")
+
+    # Javob bilan birga ko'rsatiladigan qo'shimchalar.
+    sources = models.JSONField("Manbalar", default=list, blank=True)
+    tables = models.JSONField("Jadvallar", default=list, blank=True)
+
+    # O'lchovlar — faqat AI javoblarida to'ldiriladi.
+    input_tokens = models.PositiveIntegerField("Kirish tokenlari", default=0)
+    output_tokens = models.PositiveIntegerField("Chiqish tokenlari", default=0)
+    elapsed_ms = models.PositiveIntegerField("Ketgan vaqt (ms)", default=0)
+    tool_calls = models.PositiveSmallIntegerField("Asbob chaqiruvlari", default=0)
+
+    created_at = models.DateTimeField("Sana", auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Xabar"
+        verbose_name_plural = "Xabarlar"
+        ordering = ["pk"]
+
+    def __str__(self):
+        return f"{self.get_role_display()}: {self.text[:50]}"
+
+    @property
+    def total_tokens(self):
+        return self.input_tokens + self.output_tokens
+
+    @property
+    def seconds(self):
+        return self.elapsed_ms / 1000
+
+
+# ---------------------------------------------------------------------------
+# Ta'minotchilar va nakladnoylar
+# ---------------------------------------------------------------------------
+
+class Supplier(models.Model):
+    """Tovar yetkazib beruvchi. Qarzga olingan tovar summasi `debt` da yuritiladi."""
+
+    company = models.ForeignKey(
+        Company, verbose_name="Kompaniya", on_delete=models.CASCADE, related_name="suppliers"
+    )
+    name = models.CharField("Nomi", max_length=150)
+    phone = models.CharField("Telefon", max_length=20, blank=True)
+    address = models.CharField("Manzil", max_length=255, blank=True)
+    tin = models.CharField("STIR (INN)", max_length=20, blank=True)
+    note = models.CharField("Izoh", max_length=255, blank=True)
+    debt = models.DecimalField(
+        "Bizning qarzimiz", max_digits=14, decimal_places=2, default=Decimal("0"),
+        help_text="Qarzga olingan tovarlar summasi.",
+    )
+    is_active = models.BooleanField("Faol", default=True)
+    created_at = models.DateTimeField("Yaratilgan", auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Ta'minotchi"
+        verbose_name_plural = "Ta'minotchilar"
+        ordering = ["name"]
+        constraints = [
+            models.UniqueConstraint(fields=["company", "name"], name="unique_supplier_per_company")
+        ]
+
+    def __str__(self):
+        return self.name
+
+
+class Waybill(models.Model):
+    """Nakladnoy: yuklangan fayl, undan o'qilgan qatorlar va natija.
+
+    Hayot yo'li: fayl yuklanadi → AI qatorlarni o'qiydi (qoralama) →
+    foydalanuvchi tekshirib tasdiqlaydi → qoldiq yoki chek o'zgaradi.
+    Qoralama holatida bazadagi qoldiqqa hech narsa tegmaydi.
+    """
+
+    class Kind(models.IntegerChoices):
+        QABUL = 1, "Qabul"
+        SOTUV = 2, "Sotuv"
+
+    class Status(models.IntegerChoices):
+        QORALAMA = 1, "Qoralama"
+        TASDIQLANGAN = 2, "Tasdiqlangan"
+        BEKOR = 3, "Bekor qilingan"
+
+    branch = models.ForeignKey(
+        Branch, verbose_name="Filial", on_delete=models.PROTECT, related_name="waybills"
+    )
+    kind = models.PositiveSmallIntegerField("Turi", choices=Kind.choices)
+    status = models.PositiveSmallIntegerField(
+        "Holat", choices=Status.choices, default=Status.QORALAMA
+    )
+
+    supplier = models.ForeignKey(
+        Supplier, verbose_name="Ta'minotchi", on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="waybills",
+    )
+    customer = models.ForeignKey(
+        Customer, verbose_name="Mijoz", on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="waybills",
+    )
+    sale = models.OneToOneField(
+        Sale, verbose_name="Yaratilgan chek", on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="waybill",
+    )
+
+    # Hujjatning o'zidan o'qilgan ma'lumot.
+    number = models.CharField("Nakladnoy raqami", max_length=64, blank=True)
+    doc_date = models.DateField("Hujjat sanasi", null=True, blank=True)
+    supplier_name = models.CharField(
+        "Hujjatdagi ta'minotchi nomi", max_length=200, blank=True,
+        help_text="AI o'qigan matn — ta'minotchini tanlashga yordam beradi.",
+    )
+
+    file = models.FileField("Fayl", upload_to="waybills/%Y/%m/", blank=True)
+    file_name = models.CharField("Asl fayl nomi", max_length=255, blank=True)
+
+    on_credit = models.BooleanField(
+        "Qarzga", default=False,
+        help_text="Qabulda — ta'minotchiga qarz yoziladi.",
+    )
+    note = models.CharField("Izoh", max_length=255, blank=True)
+
+    # AI tahlilining o'lchovlari.
+    parse_tokens = models.PositiveIntegerField("Tahlil tokenlari", default=0)
+    parse_ms = models.PositiveIntegerField("Tahlil vaqti (ms)", default=0)
+
+    created_by = models.ForeignKey(
+        "User", verbose_name="Yuklagan", on_delete=models.SET_NULL,
+        null=True, related_name="uploaded_waybills",
+    )
+    confirmed_by = models.ForeignKey(
+        "User", verbose_name="Tasdiqlagan", on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="confirmed_waybills",
+    )
+    created_at = models.DateTimeField("Yuklangan", auto_now_add=True)
+    confirmed_at = models.DateTimeField("Tasdiqlangan", null=True, blank=True)
+
+    class Meta:
+        verbose_name = "Nakladnoy"
+        verbose_name_plural = "Nakladnoylar"
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        label = self.number or f"#{self.pk}"
+        return f"{self.get_kind_display()} {label}"
+
+    @property
+    def is_draft(self):
+        return self.status == self.Status.QORALAMA
+
+    @property
+    def total(self):
+        return sum((item.line_total for item in self.items.all()), Decimal("0"))
+
+
+class WaybillItem(models.Model):
+    """Nakladnoydagi bitta qator.
+
+    `price` — qabulda tan narxi, sotuvda sotuv narxi. `sale_price` faqat
+    qabulda yangi mahsulot yaratilganda kerak.
+    """
+
+    class Match(models.TextChoices):
+        SHTRIX = "barcode", "Shtrix-kod"
+        NOM = "name", "Nomi"
+        TAXMIN = "semantic", "Taxminiy"
+        QOLDA = "manual", "Qo'lda"
+        YOQ = "", "Topilmadi"
+
+    waybill = models.ForeignKey(
+        Waybill, verbose_name="Nakladnoy", on_delete=models.CASCADE, related_name="items"
+    )
+    product = models.ForeignKey(
+        Product, verbose_name="Mahsulot", on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="waybill_items",
+    )
+    name = models.CharField("Hujjatdagi nomi", max_length=250)
+    barcode = models.CharField("Shtrix-kod", max_length=64, blank=True)
+    unit = models.CharField("O'lchov birligi", max_length=20, blank=True)
+    quantity = models.DecimalField(
+        "Soni", max_digits=12, decimal_places=3, default=Decimal("0"),
+        validators=[MinValueValidator(Decimal("0"))],
+    )
+    price = models.DecimalField(
+        "Narxi", max_digits=14, decimal_places=2, default=Decimal("0"),
+        validators=[MinValueValidator(Decimal("0"))],
+    )
+    sale_price = models.DecimalField(
+        "Sotuv narxi (yangi mahsulot uchun)", max_digits=14, decimal_places=2,
+        null=True, blank=True, validators=[MinValueValidator(Decimal("0"))],
+    )
+    matched_by = models.CharField(
+        "Qanday topildi", max_length=10, choices=Match.choices, blank=True
+    )
+    match_score = models.FloatField("Moslik", null=True, blank=True)
+
+    class Meta:
+        verbose_name = "Nakladnoy qatori"
+        verbose_name_plural = "Nakladnoy qatorlari"
+        ordering = ["pk"]
+
+    def __str__(self):
+        return f"{self.name} × {self.quantity}"
+
+    @property
+    def line_total(self):
+        return (self.price or Decimal("0")) * (self.quantity or Decimal("0"))

@@ -80,8 +80,12 @@
   font-size: 13px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  overflow: hidden;
+  /* `display: block` + `overflow-x` tor ekranda aylantirish uchun kerak, lekin
+     u elementni butun kenglikka yoyadi. `max-content` jadvalni o'z eniga
+     qaytaradi, `max-width` esa konteynerdan chiqib ketishiga yo'l qo'ymaydi. */
   display: block;
+  width: max-content;
+  max-width: 100%;
   overflow-x: auto;
   white-space: normal;
 }
@@ -125,6 +129,7 @@
   font-size: 12px;
 }
 .result-table tbody tr:last-child td { border-bottom: 0; }
+.result-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .table-note { padding: 7px 12px; font-size: 11.5px; color: var(--text-3); }
 
 /* Manbalar — model qaysi so'rovdan foydalangani. */
@@ -258,3 +263,166 @@
   .chat-composer { padding: 8px 16px 12px; }
   .chat-hero { padding-top: 5vh; }
 }
+
+/* ===========================================================================
+   Suhbatlar ro'yxati va o'lchovlar
+   =========================================================================== */
+
+.chat { flex-direction: row; }
+
+.chat-list {
+  flex: none;
+  width: 236px;
+  border-right: 1px solid var(--border);
+  background: var(--surface-2);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.new-chat {
+  display: flex; align-items: center; gap: 8px;
+  margin: 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13.5px;
+  text-decoration: none;
+}
+.new-chat:hover { border-color: var(--brand); }
+
+.conv-items { flex: 1; overflow-y: auto; padding: 0 8px 12px; }
+
+.conv {
+  display: flex; align-items: center;
+  border-radius: var(--radius-sm);
+}
+.conv:hover { background: var(--surface-3); }
+.conv.active { background: var(--brand-soft); }
+
+.conv-link {
+  flex: 1; min-width: 0;
+  display: block;
+  padding: 8px 10px;
+  text-decoration: none;
+  color: var(--text);
+}
+.conv-title {
+  display: block;
+  font-size: 13px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.conv-date { display: block; font-size: 11px; color: var(--text-3); margin-top: 2px; }
+
+.conv-form { display: flex; }
+.conv-del {
+  border: 0; background: transparent;
+  color: var(--text-3);
+  padding: 6px 8px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity .15s ease, color .15s ease;
+}
+.conv:hover .conv-del { opacity: 1; }
+.conv-del:hover { color: var(--danger); }
+
+.conv-empty { padding: 10px; font-size: 12.5px; color: var(--text-3); text-align: center; }
+
+.chat-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Javob ostidagi o'lchovlar. */
+.msg-stats {
+  margin-top: 6px;
+  font-size: 11.5px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 860px) {
+  /* Tor ekranda ro'yxat yashiriladi — yangi suhbat tugmasi yuqorida qoladi. */
+  .chat-list { display: none; }
+}
+
+
+/* ===========================================================================
+   Fayl biriktirish va buyruqlar
+   =========================================================================== */
+
+.chat-composer { position: relative; }
+
+.attach-btn {
+  flex: none;
+  width: 34px; height: 34px;
+  border: 0; border-radius: 9px;
+  background: transparent;
+  color: var(--text-2);
+  display: grid; place-items: center;
+  cursor: pointer;
+  margin-left: -6px;
+}
+.attach-btn:hover { color: var(--text); background: var(--surface-3); }
+.attach-btn:disabled { opacity: .4; cursor: not-allowed; }
+
+.composer-box.dragging { border-color: var(--brand); border-style: dashed; }
+
+.attach-chip {
+  max-width: 760px;
+  margin: 0 auto 8px;
+  display: flex; align-items: center; gap: 8px;
+  width: fit-content;
+  padding: 5px 6px 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+.attach-chip button {
+  border: 0; background: transparent; color: var(--text-3);
+  cursor: pointer; padding: 2px 6px; border-radius: 999px;
+}
+.attach-chip button:hover { color: var(--danger); }
+
+.cmd-menu {
+  position: absolute;
+  left: 50%; transform: translateX(-50%);
+  bottom: calc(100% - 4px);
+  width: min(760px, calc(100% - 48px));
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+  padding: 4px;
+  z-index: 5;
+}
+.cmd-menu button {
+  display: flex; gap: 12px; align-items: baseline;
+  width: 100%;
+  border: 0; background: transparent;
+  padding: 8px 10px;
+  border-radius: 6px;
+  text-align: left;
+  color: var(--text);
+  font: inherit; font-size: 13.5px;
+  cursor: pointer;
+}
+.cmd-menu button:hover { background: var(--surface-3); }
+.cmd-menu span { color: var(--text-3); font-size: 12.5px; }
+
+/* Jadval ostidagi havola — nakladnoyni ochish. */
+.table-link {
+  display: block;
+  padding: 9px 12px;
+  border-top: 1px solid var(--border);
+  font-size: 13px; font-weight: 550;
+  color: var(--brand);
+  text-decoration: none;
+}
+.table-link:hover { background: var(--surface-2); }

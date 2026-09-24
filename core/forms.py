@@ -7,9 +7,13 @@ from .models import (
     Color,
     Company,
     Customer,
+    PaymentMethod,
     Product,
     StockMovement,
+    Supplier,
     User,
+    Waybill,
+    WaybillItem,
 )
 
 CONTROL = {"class": "input"}
@@ -441,3 +445,136 @@ class CustomerPaymentForm(forms.Form):
                 f"Qarz {self.customer.debt:.0f} — bundan ortiq to'lov qabul qilinmaydi."
             )
         return amount
+
+
+# ---------------------------------------------------------------------------
+# Ta'minotchilar va nakladnoylar
+# ---------------------------------------------------------------------------
+
+class SupplierForm(forms.ModelForm):
+    class Meta:
+        model = Supplier
+        fields = ["name", "phone", "tin", "address", "note", "is_active"]
+        widgets = {
+            "name": forms.TextInput(attrs=CONTROL),
+            "phone": forms.TextInput(attrs={"placeholder": "+998 90 123 45 67", **CONTROL}),
+            "tin": forms.TextInput(attrs=CONTROL),
+            "address": forms.TextInput(attrs=CONTROL),
+            "note": forms.TextInput(attrs=CONTROL),
+            "is_active": forms.CheckboxInput(attrs={"class": "checkbox"}),
+        }
+
+    def __init__(self, *args, company=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.company = company
+
+    def clean_name(self):
+        name = " ".join((self.cleaned_data.get("name") or "").split())
+        duplicate = Supplier.objects.filter(company=self.company, name__iexact=name)
+        if self.instance.pk:
+            duplicate = duplicate.exclude(pk=self.instance.pk)
+        if duplicate.exists():
+            raise forms.ValidationError("Bu nomdagi ta'minotchi allaqachon bor.")
+        return name
+
+
+class WaybillUploadForm(forms.Form):
+    """Nakladnoy faylini yuklash."""
+
+    kind = forms.TypedChoiceField(
+        label="Turi", choices=Waybill.Kind.choices, coerce=int,
+        initial=Waybill.Kind.QABUL, widget=forms.Select(attrs=CONTROL),
+    )
+    file = forms.FileField(
+        label="Fayl",
+        help_text="Rasm (jpg, png, webp), PDF, Excel (xlsx) yoki CSV — 10 MB gacha.",
+        widget=forms.ClearableFileInput(attrs={
+            "class": "input", "accept": ".jpg,.jpeg,.png,.webp,.pdf,.xlsx,.csv",
+        }),
+    )
+
+
+class WaybillHeaderForm(forms.ModelForm):
+    """Nakladnoy sarlavhasi: kimdan/kimga, raqam, sana."""
+
+    class Meta:
+        model = Waybill
+        fields = ["supplier", "customer", "number", "doc_date", "on_credit", "note"]
+        widgets = {
+            "supplier": forms.Select(attrs=CONTROL),
+            "customer": forms.Select(attrs=CONTROL),
+            "number": forms.TextInput(attrs=CONTROL),
+            "doc_date": forms.DateInput(attrs={"type": "date", **CONTROL}, format="%Y-%m-%d"),
+            "on_credit": forms.CheckboxInput(attrs={"class": "checkbox"}),
+            "note": forms.TextInput(attrs=CONTROL),
+        }
+
+    def __init__(self, *args, company=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["supplier"].queryset = Supplier.objects.filter(company=company, is_active=True)
+        self.fields["customer"].queryset = Customer.objects.filter(company=company, is_active=True)
+        self.fields["supplier"].empty_label = "— tanlanmagan —"
+        self.fields["customer"].empty_label = "— tanlanmagan —"
+
+        # Qabulda mijoz, sotuvda ta'minotchi va "qarzga" belgisi kerak emas.
+        if self.instance.kind == Waybill.Kind.QABUL:
+            del self.fields["customer"]
+        else:
+            del self.fields["supplier"]
+            del self.fields["on_credit"]
+
+
+class ProductChoiceField(forms.ModelChoiceField):
+    def label_from_instance(self, obj):
+        return f"{obj} · {obj.barcode}" if obj.barcode else str(obj)
+
+
+class WaybillItemForm(forms.ModelForm):
+    """Nakladnoy qatori — AI o'qigan qiymatlarni foydalanuvchi tuzatadi."""
+
+    product = ProductChoiceField(
+        label="Mahsulot", queryset=Product.objects.none(), required=False,
+        empty_label="— yangi mahsulot —", widget=forms.Select(attrs=CONTROL),
+    )
+
+    class Meta:
+        model = WaybillItem
+        fields = ["product", "name", "barcode", "unit", "quantity", "price", "sale_price"]
+        widgets = {
+            "name": forms.TextInput(attrs=CONTROL),
+            "barcode": forms.TextInput(attrs=CONTROL),
+            "unit": forms.TextInput(attrs=CONTROL),
+            "quantity": forms.NumberInput(attrs={"step": AMOUNT_STEP, "min": "0", **CONTROL}),
+            "price": forms.NumberInput(attrs={"step": MONEY_STEP, "min": "0", **CONTROL}),
+            "sale_price": forms.NumberInput(attrs={"step": MONEY_STEP, "min": "0", **CONTROL}),
+        }
+
+    def __init__(self, *args, branch=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["product"].queryset = (
+            Product.objects.filter(branch=branch, is_active=True).select_related("color")
+        )
+
+    def save(self, commit=True):
+        item = super().save(commit=False)
+        # Foydalanuvchi mahsulotni o'zi almashtirgan bo'lsa — bu endi qo'lda moslash.
+        if "product" in self.changed_data:
+            item.matched_by = WaybillItem.Match.QOLDA if item.product else WaybillItem.Match.YOQ
+            item.match_score = None
+        if commit:
+            item.save()
+        return item
+
+
+WaybillItemFormSet = forms.inlineformset_factory(
+    Waybill, WaybillItem, form=WaybillItemForm, extra=0, can_delete=True,
+)
+
+
+class WaybillSaleForm(forms.Form):
+    """Sotuv nakladnoyini tasdiqlashda to'lov turi."""
+
+    payment_method = forms.TypedChoiceField(
+        label="To'lov turi", choices=PaymentMethod.choices, coerce=int,
+        initial=PaymentMethod.OTKAZMA, widget=forms.Select(attrs=CONTROL),
+    )

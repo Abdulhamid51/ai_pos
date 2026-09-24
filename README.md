@@ -3,7 +3,7 @@
 Django asosidagi POS tizimi: kassa, ombor, mijozlar, hisobotlar va ma'lumot
 ustida ishlaydigan AI yordamchi.
 
-Stek: Django 5.2, SQLite, Pillow, pandas, Google Gemini API (`google-genai`).
+Stek: Django 5.2, SQLite, Pillow, pandas, openpyxl, Google Gemini API (`google-genai`).
 Frontend — shablon va vanilla JS, qurish bosqichi (build step) yo'q.
 
 ## Ishga tushirish
@@ -58,6 +58,7 @@ Qatlamlar bir yo'nalishda bog'langan: ko'rinish → xizmat → model.
 | Qidiruv | `core/retrieval.py` | Semantik qidiruv va tayyor so'rovlar (RAG "R") |
 | To'plamlar | `core/datasets.py` | Ruxsatga qarab kesilgan DataFrame'lar |
 | Kod bajarish | `core/analysis.py` | Model yozgan pandas kodini tekshirib bajarish |
+| Hujjatlar | `core/documents.py` | Nakladnoy faylini o'qish va mahsulotga moslash |
 | AI | `core/ai.py` | Asboblar, suhbat sikli, xato tarjimasi |
 | Ko'rinish | `core/views.py`, `core/forms.py` | HTTP, forma, ruxsat tekshiruvi |
 
@@ -127,6 +128,35 @@ savdo qismi ishlashda davom etadi.
 - Suhbat tarixi Gemini tomonida (`previous_interaction_id`), sessiyada faqat
   oxirgi javob id'si, ko'rinadigan xabarlar brauzerning `sessionStorage` da.
 
+### Nakladnoylar, qabul va ta'minotchilar
+
+- Nakladnoy yuklash: rasm (jpg, png, webp), PDF, Excel (xlsx), CSV — 10 MB gacha.
+  Ikki kirish nuqtasi: `/qabul/` sahifasidagi forma va chatdagi `/qabul`,
+  `/sotuv` buyruqlari (fayl biriktirish yoki sudrab tashlash bilan).
+- Rasm va PDF Gemini Files API orqali, Excel/CSV esa pandas bilan o'qilib matn
+  sifatida yuboriladi; javob `ParsedWaybill` Pydantic sxemasiga majburlanadi.
+- Har bir qator mahsulotga uch bosqichda moslanadi: shtrix-kod → aniq nom →
+  semantik o'xshashlik (`MATCH_MIN_SCORE = 0.80`). Qanday moslangani sahifada
+  belgilanadi: aniq / taxminiy / topilmadi.
+- Ko'rib chiqish sahifasi: qatorlarni tahrirlash, mahsulotni qo'lda tanlash,
+  qator qo'shish/o'chirish (Django inline formset), jonli summa.
+- Qabulni tasdiqlash (`services.confirm_receipt`): qoldiq `apply_stock(KIRIM)`
+  orqali oshadi, tan narxi yangilanadi, moslanmagan qator uchun yangi mahsulot
+  yaratiladi, "qarzga" belgilansa ta'minotchi qarzi oshadi.
+- Sotuvni tasdiqlash (`services.confirm_sale`): mavjud `checkout()` chaqiriladi —
+  qoldiq, qarz chegarasi va huquq tekshiruvlari kassadagi bilan bir xil.
+- Ta'minotchilar: ro'yxat, qo'shish/tahrirlash, nakladnoylar tarixi va qarz.
+  Hujjatdagi nom mavjud ta'minotchiga avtomatik moslanadi (qo'shtirnoq va
+  MChJ/OOO kabi huquqiy shakllar e'tiborga olinmaydi).
+- Huquqlar: qabul va ta'minotchilar — direktor va ta'minotchi (`can_receive`),
+  sotuv nakladnoyi — sotish huquqi borlar (`can_sell`).
+
+### Suhbatlar tarixi
+
+- `Conversation` / `Message` modellari: suhbatlar bazada, chap panelda ro'yxat,
+  `/suhbat/<id>/` manzili, o'chirish.
+- Har bir javob ostida token (kirish → chiqish), vaqt va asbob chaqiruvlari soni.
+
 ## Texnik yechimlar
 
 Quyidagilar ataylab tanlangan yondashuvlar — sababi bilan.
@@ -190,7 +220,24 @@ haqiqiy `<table>` ga aylantiradi.
 o'zgarmagan bo'lsa API qayta chaqirilmaydi.
 
 **Model yozgan kod jurnalga tushadi** (`logger.info`) — nosozlikni tekshirish
-uchun.
+uchun. Har bir API chaqiruvining tokenlari ham alohida yoziladi.
+
+**Nakladnoy ikki bosqichli: qoralama → tasdiq.** AI o'qigan ma'lumot bazaga
+faqat qoralama sifatida tushadi; qoldiq va chek foydalanuvchi tasdiqlagandan
+keyin o'zgaradi. Tasdiqlash `select_for_update` bilan qulflanadi va bitta
+tranzaksiyada bajariladi — biror qator xato bo'lsa, hech narsa qo'llanmaydi.
+
+**Arifmetikani model emas, kod bajaradi.** Model qatordagi dona narxi va jami
+summani alohida o'qiydi; dona narxi yo'q bo'lsa `jami / soni` kodda hisoblanadi,
+ikkalasi bo'lsa `narx × soni ≠ jami` farqi ogohlantirish sifatida chiqadi.
+
+**Excel sarlavhasiz o'qiladi** (`header=None`): haqiqiy nakladnoylarda tepada
+rekvizitlar turadi, sarlavha qatorini model o'zi topadi.
+
+**Ustun nomlari bitta manbada.** `datasets.COLUMNS` dan ham bo'sh DataFrame,
+ham modelga beriladigan ro'yxat olinadi. Ustunlar tizim ko'rsatmasida bo'lgani
+uchun model ko'pincha `toplamni_korish` siz kod yozadi — bitta API chaqiruvi
+tejaladi (o'lchangan: 8 534 → 4 274 kirish tokeni).
 
 ## Rollar
 
@@ -213,13 +260,14 @@ core/
   retrieval.py          semantik qidiruv va tayyor so'rovlar
   datasets.py           pandas to'plamlari (ruxsat bo'yicha kesilgan)
   analysis.py           model kodini tekshirib bajarish
+  documents.py          nakladnoy faylini o'qish va moslash
   imaging.py            rasm siqish
   context.py            umumiy shablon konteksti
   views.py, forms.py    ko'rinishlar va formalar
   management/commands/  demo_data, ai_test, index_products
 templates/              base.html va umumiy qismlar
-static/css/             style.css (dizayn tizimi), chat.css
-static/js/              app.js, pos.js, products.js, dashboard.js, chat.js
+static/css/             style.css (dizayn tizimi), chat.css, waybill.css
+static/js/              app.js, pos.js, products.js, dashboard.js, chat.js, waybill.js
 ```
 
 ## Testlar
@@ -228,10 +276,14 @@ static/js/              app.js, pos.js, products.js, dashboard.js, chat.js
 python manage.py test
 ```
 
-107 ta test (18 ta sinf): sotuv va qaytarish hisob-kitobi, qarzga sotish va
+135 ta test (26 ta sinf): sotuv va qaytarish hisob-kitobi, qarzga sotish va
 qarz chegarasi, qoldiq jurnali, rol va ruxsatlar, mahsulot/mijoz/xodim
-ko'rinishlari, hisobot agregatlari, raqam kiritish formatlari, rasm siqish.
-AI qatlami testlar bilan qoplanmagan — tashqi API chaqiruvi talab qiladi.
+ko'rinishlari, hisobot agregatlari, raqam kiritish formatlari, rasm siqish,
+nakladnoy qabuli va sotuvi (tranzaksiya, qayta tasdiqlash, huquqlar), yuklash
+va chat buyruqlari, pandas qum qutisi.
+
+Gemini chaqiruvlari testlarda `mock.patch` bilan almashtiriladi — testlar
+internet va API kalitisiz ishlaydi.
 
 ## Ma'lum cheklovlar
 
@@ -244,3 +296,8 @@ AI qatlami testlar bilan qoplanmagan — tashqi API chaqiruvi talab qiladi.
 - AI so'rovlari uchun tezlik cheklovi (rate limit) qo'yilmagan.
 - Tahlil oynasi 180 kun, to'plamga eng ko'pi 20 000 qator (`datasets.py`).
 - Ma'lumotlar bazasi SQLite; bir vaqtda ko'p yozuvga mo'ljallanmagan.
+- Nakladnoy tahlili sinxron: 5–10 soniya davomida HTTP so'rov band turadi.
+- Ta'minotchiga to'lov (qarzni kamaytirish) hali yo'q — qarz faqat oshadi.
+- Statik fayllarga versiya qo'yilmagan: yangilanishdan keyin brauzer eski JS/CSS ni
+  keshdan olishi mumkin (Cmd+Shift+R). Ishlab chiqarishda
+  `ManifestStaticFilesStorage` kerak.

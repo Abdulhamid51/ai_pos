@@ -1,0 +1,18 @@
+{% load humanize %}
+{% if waybill.file %}
+  <div class="card">
+    <div class="card-head"><h2>Asl fayl</h2>
+      {% if waybill.parse_tokens %}<span class="sub">{{ waybill.parse_tokens|intcomma }} token · {{ waybill.parse_ms|floatformat:0 }} ms</span>{% endif %}
+    </div>
+    <div class="card-body">
+      {% with name=waybill.file.name|lower %}
+        {% if ".png" in name or ".jpg" in name or ".jpeg" in name or ".webp" in name %}
+          <a href="{{ waybill.file.url }}" target="_blank" rel="noopener">
+            <img class="wb-preview" src="{{ waybill.file.url }}" alt="Nakladnoy rasmi">
+          </a>
+        {% endif %}
+      {% endwith %}
+      <a class="btn btn-sm" href="{{ waybill.file.url }}" target="_blank" rel="noopener">{{ waybill.file_name|default:"Faylni ochish"|truncatechars:34 }}</a>
+    </div>
+  </div>
+{% endif %}

@@ -6,8 +6,9 @@ from . import views
 urlpatterns = [
     # Bosh sahifa — AI yordamchi. Boshqaruv paneli /panel/ manzilida qoldi.
     path("", views.chat, name="chat"),
+    path("suhbat/<int:pk>/", views.chat, name="chat_detail"),
     path("suhbat/yuborish/", views.chat_send, name="chat_send"),
-    path("suhbat/yangi/", views.chat_reset, name="chat_reset"),
+    path("suhbat/<int:pk>/ochirish/", views.chat_delete, name="chat_delete"),
 
     path("panel/", views.dashboard, name="dashboard"),
 
@@ -32,6 +33,15 @@ urlpatterns = [
     path("mahsulotlar/<int:pk>/ochirish/", views.product_delete, name="product_delete"),
 
     path("hisobotlar/", views.reports, name="reports"),
+
+    path("taminotchilar/", views.supplier_list, name="supplier_list"),
+    path("taminotchilar/yangi/", views.supplier_edit, name="supplier_create"),
+    path("taminotchilar/<int:pk>/", views.supplier_detail, name="supplier_detail"),
+    path("taminotchilar/<int:pk>/tahrirlash/", views.supplier_edit, name="supplier_edit"),
+
+    path("qabul/", views.waybill_list, name="waybill_list"),
+    path("qabul/yuklash/", views.waybill_upload, name="waybill_upload"),
+    path("qabul/<int:pk>/", views.waybill_detail, name="waybill_detail"),
 
     path("xodimlar/", views.staff_list, name="staff_list"),
     path("xodimlar/yangi/", views.staff_edit, name="staff_create"),

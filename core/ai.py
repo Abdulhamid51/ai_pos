@@ -14,6 +14,8 @@ o'qish amallari bor.
 
 import json
 import logging
+import time
+from dataclasses import dataclass, field
 
 from django.conf import settings
 from django.utils import timezone
@@ -56,8 +58,7 @@ TOOLS = [
         "type": "function",
         "name": "mahsulot_qidir",
         "description": (
-            "Mahsulotlarni ma'no bo'yicha qidiradi. Nomi aniq bo'lmagan savollarda "
-            "ham ishlaydi: 'sovuq ichimlik', 'bolalar uchun kiyim', 'bosh og'rig'iga dori'. "
+            "Mahsulotlarni ma'no bo'yicha qidiradi ('sovuq ichimlik', 'bolalar kiyimi'). "
             "Narxi, qoldig'i va filialini qaytaradi."
         ),
         "parameters": {
@@ -75,8 +76,8 @@ TOOLS = [
         "type": "function",
         "name": "savdo_hisoboti",
         "description": (
-            "Tanlangan davr uchun savdo ko'rsatkichlari: tushum, foyda, cheklar soni, "
-            "o'rtacha chek, eng ko'p sotilgan mahsulotlar va to'lov turlari."
+            "Davr bo'yicha savdo: tushum, foyda, cheklar, o'rtacha chek, "
+            "top mahsulotlar, to'lov turlari."
         ),
         "parameters": {
             "type": "object",
@@ -94,8 +95,7 @@ TOOLS = [
         "type": "function",
         "name": "ombor_ogohlantirishlari",
         "description": (
-            "Diqqat talab qiladigan tovarlar: qoldig'i minimal darajadan pastga tushganlar "
-            "va 30 kun ichida yaroqlilik muddati tugaydiganlar."
+            "Qoldig'i minimaldan past va 30 kun ichida muddati tugaydigan tovarlar."
         ),
         "parameters": {"type": "object", "properties": {}},
     },
@@ -103,8 +103,8 @@ TOOLS = [
         "type": "function",
         "name": "mijoz_qidir",
         "description": (
-            "Mijozlarni ism yoki telefon bo'yicha qidiradi va qarzini ko'rsatadi. "
-            "So'rov bo'sh qoldirilsa — eng katta qarzdorlar ro'yxatini qaytaradi."
+            "Mijozni ism yoki telefon bo'yicha qidiradi, qarzini ko'rsatadi. "
+            "So'rov bo'sh bo'lsa — eng katta qarzdorlar."
         ),
         "parameters": {
             "type": "object",
@@ -120,8 +120,8 @@ TOOLS = [
         "type": "function",
         "name": "toplamni_korish",
         "description": (
-            "Ma'lumot to'plamining ustunlari, turlari va 5 ta namuna qatorini qaytaradi. "
-            "pandas kodi yozishdan oldin shuni chaqir."
+            "To'plam ustunlarining turlari va bir nechta namuna qator. Ustun nomlari "
+            "ko'rsatmada berilgan — buni faqat qiymat formatini bilish uchun chaqir."
         ),
         "parameters": {
             "type": "object",
@@ -139,8 +139,7 @@ TOOLS = [
         "type": "function",
         "name": "pandas_hisobla",
         "description": (
-            "Tanlangan to'plam ustida pandas kodini bajaradi va natijani qaytaradi. "
-            "Kodda `def javob(df):` funksiyasi bo'lishi shart."
+            "To'plam ustida pandas kodini bajaradi. Kodda `def javob(df):` bo'lishi shart."
         ),
         "parameters": {
             "type": "object",
@@ -164,23 +163,21 @@ TOOLS = [
 ANALYSIS_GUIDE = """
 ## Erkin tahlil (pandas)
 
-Yuqoridagi tayyor asboblar yetmasa — masalan "qaysi kassir ko'proq chegirma berdi",
-"haftaning qaysi kunida savdo yaxshi", "qaysi mahsulot foyda bermayapti" kabi
-savollarda — pandas tahlilidan foydalan:
-
-1. avval `toplamni_korish` bilan ustunlar va namuna qatorlarni ko'r;
-2. so'ng `pandas_hisobla` ga kod yoz.
+Tayyor asboblar yetmasa — "qaysi kassir ko'proq chegirma berdi", "haftaning
+qaysi kunida savdo yaxshi" kabi savollarda — `pandas_hisobla` ga kod yoz.
+Ustunlar quyida berilgan, shuning uchun odatda to'g'ridan-to'g'ri kod yozaver.
+`toplamni_korish` ni faqat qiymat formatini ko'rish kerak bo'lganda chaqir.
 
 Kod qoidalari:
-- `def javob(df):` funksiyasi bo'lishi shart, natijani `return` qil;
-- faqat `df` va `pd` mavjud. import yo'q, fayl bilan ishlash yo'q, `while` yo'q;
+- `def javob(df):` bo'lsin, natijani `return` qil;
+- faqat `df` va `pd` mavjud: import, fayl amallari va `while` ishlamaydi;
 - natija DataFrame, Series yoki bitta qiymat bo'lsin;
-- ustun nomlarini o'zing o'ylab topma — faqat `toplamni_korish` ko'rsatganini ishlat.
+- faqat quyida sanalgan ustunlardan foydalan.
 
-Natija katta jadval bo'lsa, u foydalanuvchiga o'zi ko'rsatiladi: sen uni
-takrorlama, faqat bir-ikki gapda xulosa yoz.
+Natija katta jadval bo'lsa, u foydalanuvchiga o'zi ko'rsatiladi: takrorlama,
+qisqa xulosa yoz.
 
-## Mavjud to'plamlar
+## To'plamlar
 
 {catalog}
 """
@@ -188,6 +185,24 @@ takrorlama, faqat bir-ikki gapda xulosa yoz.
 
 class AIError(Exception):
     """AI javob bera olmadi — sabab foydalanuvchiga ko'rsatiladi."""
+
+
+@dataclass
+class ChatResult:
+    """Bitta savolga javob va uning o'lchovlari.
+
+    Bitta savol bir nechta API chaqiruvini talab qilishi mumkin (asbob chaqirilsa),
+    shuning uchun tokenlar yig'indi bo'lib keladi.
+    """
+
+    text: str
+    interaction_id: str
+    sources: list = field(default_factory=list)
+    tables: list = field(default_factory=list)
+    input_tokens: int = 0
+    output_tokens: int = 0
+    elapsed_ms: int = 0
+    tool_calls: int = 0
 
 
 def is_configured():
@@ -321,7 +336,7 @@ def _arguments_of(step):
 # ---------------------------------------------------------------------------
 
 def chat_reply(message, user, previous_id=None):
-    """Savolga javob qaytaradi: (javob, suhbat_id, manbalar, jadvallar)."""
+    """Savolga javob beradi va `ChatResult` qaytaradi."""
     client = client_or_error()
 
     guide = ANALYSIS_GUIDE.format(catalog=datasets.catalog())
@@ -337,9 +352,24 @@ def chat_reply(message, user, previous_id=None):
 
     sources = []
     tables = []   # foydalanuvchiga to'g'ridan-to'g'ri ko'rsatiladigan katta natijalar
+    started = time.monotonic()
+    input_tokens = output_tokens = tool_calls = 0
 
     for _ in range(MAX_STEPS):
         interaction = _create(client, params, allow_retry=bool(params.get("previous_interaction_id")))
+
+        # Har bir chaqiruvning tokenlari qo'shib boriladi.
+        usage = getattr(interaction, "usage", None)
+        if usage:
+            step_in = getattr(usage, "total_input_tokens", 0) or 0
+            step_out = getattr(usage, "total_output_tokens", 0) or 0
+            input_tokens += step_in
+            output_tokens += step_out
+            logger.info(
+                "chaqiruv %s: kirish=%s chiqish=%s fikrlash=%s",
+                len(sources) + 1, step_in, step_out,
+                getattr(usage, "total_thought_tokens", 0) or 0,
+            )
 
         calls = [
             step for step in (interaction.steps or [])
@@ -350,9 +380,19 @@ def chat_reply(message, user, previous_id=None):
             text = (interaction.output_text or "").strip()
             if not text:
                 raise AIError("Model bo'sh javob qaytardi.")
-            return text, interaction.id, sources, tables
+            return ChatResult(
+                text=text,
+                interaction_id=interaction.id,
+                sources=sources,
+                tables=tables,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                elapsed_ms=int((time.monotonic() - started) * 1000),
+                tool_calls=tool_calls,
+            )
 
         # Model so'ragan barcha asboblarni bajaramiz va natijalarni qaytaramiz.
+        tool_calls += len(calls)
         results = []
         for call in calls:
             arguments = _arguments_of(call)

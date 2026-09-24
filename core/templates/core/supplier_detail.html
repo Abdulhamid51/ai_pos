@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% load humanize static %}
+
+{% block title %}{{ supplier.name }} · AI POS{% endblock %}
+
+{% block head %}<link rel="stylesheet" href="{% static 'css/waybill.css' %}">{% endblock %}
+
+{% block topbar_extra %}
+  <a class="btn" href="{% url 'supplier_edit' supplier.pk %}">Tahrirlash</a>
+  <a class="btn" href="{% url 'supplier_list' %}">← Ta'minotchilar</a>
+{% endblock %}
+
+{% block content %}
+<div class="grid grid-2">
+
+  <div class="card">
+    <div class="card-head"><h2>Nakladnoylar</h2><span class="sub">oxirgi 50 tasi</span></div>
+    <div class="table-wrap">
+      <table class="data">
+        <thead>
+          <tr><th>Nakladnoy</th><th>Sana</th><th>Filial</th><th class="num">Qatorlar</th>
+              <th class="num">Summa</th><th>Holat</th></tr>
+        </thead>
+        <tbody>
+          {% for w in waybills %}
+            <tr>
+              <td><a href="{% url 'waybill_detail' w.pk %}">№{{ w.number|default:w.pk }}</a>
+                {% if w.on_credit %}<div class="muted">qarzga</div>{% endif %}</td>
+              <td class="muted">{{ w.doc_date|date:"d.m.Y"|default:w.created_at|date:"d.m.Y" }}</td>
+              <td class="muted">{{ w.branch.name }}</td>
+              <td class="num">{{ w.items.all|length }}</td>
+              <td class="num">{{ w.total|floatformat:0|intcomma }}</td>
+              <td><span class="wb-status s{{ w.status }}">{{ w.get_status_display }}</span></td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="6"><div class="empty"><p>Bu ta'minotchidan hali tovar qabul qilinmagan.</p></div></td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><h2>Ma'lumotlar</h2></div>
+    <div class="card-body">
+      <div class="info-list">
+        <div><span>Nomi</span><span>{{ supplier.name }}</span></div>
+        <div><span>Telefon</span><span>{{ supplier.phone|default:"—" }}</span></div>
+        <div><span>STIR</span><span>{{ supplier.tin|default:"—" }}</span></div>
+        <div><span>Manzil</span><span>{{ supplier.address|default:"—" }}</span></div>
+        {% if supplier.note %}<div><span>Izoh</span><span>{{ supplier.note }}</span></div>{% endif %}
+        <div><span>Bizning qarz</span>
+          <span {% if supplier.debt %}class="stock low"{% endif %}>{{ supplier.debt|floatformat:0|intcomma }} {{ currency }}</span></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+

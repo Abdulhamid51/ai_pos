@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% load humanize static %}
+
+{% block title %}Qabul · AI POS{% endblock %}
+
+{% block head %}<link rel="stylesheet" href="{% static 'css/waybill.css' %}">{% endblock %}
+
+{% block topbar_extra %}
+  {% if can_receive %}<a class="btn" href="{% url 'supplier_list' %}">Ta'minotchilar</a>{% endif %}
+{% endblock %}
+
+{% block content %}
+
+<!-- Fayl yuklash -->
+<div class="card">
+  <div class="card-head">
+    <h2>Nakladnoy yuklash</h2>
+    <span class="sub">AI jadvalni o'qiydi — tasdiqlaguningizcha qoldiqqa tegilmaydi</span>
+  </div>
+  <div class="card-body">
+    <form class="wb-upload" method="post" action="{% url 'waybill_upload' %}" enctype="multipart/form-data">
+      {% csrf_token %}
+      <div class="field">
+        <label for="{{ upload_form.kind.id_for_label }}">{{ upload_form.kind.label }}</label>
+        {{ upload_form.kind }}
+      </div>
+      <div class="field grow">
+        <label for="{{ upload_form.file.id_for_label }}">{{ upload_form.file.label }}</label>
+        {{ upload_form.file }}
+        <div class="muted">{{ upload_form.file.help_text }}</div>
+      </div>
+      <button class="btn btn-primary" type="submit" id="wbUploadBtn">Yuklash va o'qish</button>
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  <div class="toolbar">
+    <nav class="wb-tabs" aria-label="Nakladnoy turi">
+      <a href="?tur=qabul" {% if kind == "qabul" %}aria-current="page"{% endif %}>Qabul</a>
+      <a href="?tur=sotuv" {% if kind == "sotuv" %}aria-current="page"{% endif %}>Sotuv</a>
+      <a href="?tur=hammasi" {% if kind == "hammasi" %}aria-current="page"{% endif %}>Hammasi</a>
+    </nav>
+    <form class="toolbar-filters" method="get">
+      <input type="hidden" name="tur" value="{{ kind }}">
+      <select class="input" name="holat" onchange="this.form.submit()">
+        <option value="">Barcha holatlar</option>
+        {% for value, label in statuses %}
+          <option value="{{ value }}" {% if status == value|stringformat:"s" %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </form>
+  </div>
+
+  <div class="table-wrap">
+    <table class="data">
+      <thead>
+        <tr><th>Nakladnoy</th><th>Turi</th><th>Kimdan / kimga</th><th>Filial</th>
+            <th class="num">Qatorlar</th><th class="num">Summa</th><th>Holat</th><th>Yuklangan</th></tr>
+      </thead>
+      <tbody>
+        {% for w in waybills %}
+          <tr>
+            <td>
+              <a href="{% url 'waybill_detail' w.pk %}">№{{ w.number|default:w.pk }}</a>
+              {% if w.file_name %}<div class="muted">{{ w.file_name|truncatechars:32 }}</div>{% endif %}
+            </td>
+            <td>{{ w.get_kind_display }}</td>
+            <td>
+              {% if w.supplier %}{{ w.supplier.name }}
+              {% elif w.customer %}{{ w.customer.full_name }}
+              {% elif w.supplier_name %}<span class="muted">{{ w.supplier_name|truncatechars:30 }}</span>
+              {% else %}<span class="muted">—</span>{% endif %}
+            </td>
+            <td class="muted">{{ w.branch.name }}</td>
+            <td class="num">{{ w.items.all|length }}</td>
+            <td class="num">{{ w.total|floatformat:0|intcomma }}</td>
+            <td><span class="wb-status s{{ w.status }}">{{ w.get_status_display }}</span></td>
+            <td class="muted">{{ w.created_at|date:"d.m.Y H:i" }}<div>{{ w.created_by|default:"" }}</div></td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="8">
+            <div class="empty"><p>Hali nakladnoy yuklanmagan. Yuqoridagi formadan yoki chatda
+              <code>/qabul</code>, <code>/sotuv</code> buyrug'i bilan yuklang.</p></div>
+          </td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if page_obj.has_other_pages %}
+    <div class="pagination">
+      {% if page_obj.has_previous %}
+        <a class="btn btn-sm" href="{% querystring page=page_obj.previous_page_number %}">← Oldingi</a>
+      {% endif %}
+      <span class="muted">{{ page_obj.number }} / {{ page_obj.paginator.num_pages }}</span>
+      {% if page_obj.has_next %}
+        <a class="btn btn-sm" href="{% querystring page=page_obj.next_page_number %}">Keyingi →</a>
+      {% endif %}
+    </div>
+  {% endif %}
+</div>
+
+<script>
+  // Tahlil 5-10 soniya oladi — tugma bosilgach qayta bosilmasin.
+  document.querySelector(".wb-upload").addEventListener("submit", function () {
+    var button = document.getElementById("wbUploadBtn");
+    button.disabled = true;
+    button.textContent = "O'qilmoqda…";
+  });
+</script>
+{% endblock %}

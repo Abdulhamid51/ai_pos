@@ -9,60 +9,113 @@
 
 {% block topbar_extra %}
   {% if branch %}<span class="chip">{{ branch.name }}</span>{% endif %}
-  <button class="btn" type="button" id="chatNew">Yangi suhbat</button>
+  <a class="btn" href="{% url 'chat' %}">Yangi suhbat</a>
   <a class="btn" href="{% url 'dashboard' %}">Boshqaruv paneli</a>
 {% endblock %}
 
 {% block content %}
 <div class="chat">
 
-  <div class="chat-scroll" id="chatScroll">
-    <div class="chat-thread" id="chatThread">
+  <!-- Chap panel: saqlangan suhbatlar -->
+  <aside class="chat-list">
+    <a class="new-chat" href="{% url 'chat' %}">
+      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
+           stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+      Yangi suhbat
+    </a>
 
-      <!-- Suhbat bo'sh bo'lganda ko'rinadigan qism -->
-      <div class="chat-hero" id="chatHero">
-        <div class="hero-mark">AP</div>
-        <h2>Salom, {{ user.first_name|default:user.username }}</h2>
-        <p>Do'kon holati, savdo va ombor bo'yicha savol bering.</p>
+    <div class="conv-items">
+      {% for item in conversations %}
+        <div class="conv {% if conversation and conversation.pk == item.pk %}active{% endif %}">
+          <a class="conv-link" href="{% url 'chat_detail' item.pk %}" title="{{ item.title }}">
+            <span class="conv-title">{{ item.title|default:"Suhbat" }}</span>
+            <span class="conv-date">{{ item.updated_at|date:"d.m.Y H:i" }}</span>
+          </a>
+          <form class="conv-form" method="post" action="{% url 'chat_delete' item.pk %}">
+            {% csrf_token %}
+            <button class="conv-del" type="submit" title="O'chirish" aria-label="O'chirish">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor"
+                   stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+            </button>
+          </form>
+        </div>
+      {% empty %}
+        <p class="conv-empty">Hali suhbat yo'q</p>
+      {% endfor %}
+    </div>
+  </aside>
 
-        {% if ai_ready %}
-        <div class="hero-chips">
-          <button class="suggest" type="button">Bugungi savdo qanday ketyapti?</button>
-          <button class="suggest" type="button">Qaysi mahsulotlar tugab qolyapti?</button>
-          <button class="suggest" type="button">So'nggi hafta nima yaxshi sotildi?</button>
-          <button class="suggest" type="button">Muddati tugayotgan tovarlar bormi?</button>
+  <!-- O'ng taraf: xabarlar va kiritish maydoni -->
+  <div class="chat-main">
+    <div class="chat-scroll" id="chatScroll">
+      <div class="chat-thread" id="chatThread">
+
+        <div class="chat-hero" id="chatHero" {% if conversation %}hidden{% endif %}>
+          <div class="hero-mark">AP</div>
+          <h2>Salom, {{ user.first_name|default:user.username }}</h2>
+          <p>Do'kon holati, savdo va ombor bo'yicha savol bering.</p>
+
+          {% if ai_ready %}
+          <div class="hero-chips">
+            <button class="suggest" type="button">Bugungi savdo qanday ketyapti?</button>
+            <button class="suggest" type="button">Qaysi mahsulotlar tugab qolyapti?</button>
+            <button class="suggest" type="button">So'nggi hafta nima yaxshi sotildi?</button>
+            <button class="suggest" type="button">Eng ko'p foyda bergan mahsulot qaysi?</button>
+          </div>
+          {% else %}
+          <div class="alert warning" style="margin-top:14px">
+            GEMINI_API_KEY sozlanmagan — <code>.env</code> faylini tekshiring.
+          </div>
+          {% endif %}
         </div>
-        {% else %}
-        <div class="alert warning" style="margin-top:14px">
-          GEMINI_API_KEY sozlanmagan — <code>.env</code> faylini tekshiring.
-        </div>
-        {% endif %}
+
+      </div>
+    </div>
+
+    <div class="chat-composer">
+      <!-- "/" yozilganda chiqadigan buyruqlar -->
+      <div class="cmd-menu" id="cmdMenu" hidden>
+        <button type="button" data-cmd="/qabul"><b>/qabul</b><span>nakladnoy bo'yicha tovar qabul qilish</span></button>
+        <button type="button" data-cmd="/sotuv"><b>/sotuv</b><span>nakladnoy bo'yicha sotish</span></button>
       </div>
 
-    </div>
-  </div>
+      <div class="attach-chip" id="attachChip" hidden>
+        <span class="attach-name" id="attachName"></span>
+        <button type="button" id="attachRemove" title="Olib tashlash" aria-label="Faylni olib tashlash">✕</button>
+      </div>
 
-  <div class="chat-composer">
-    <div class="composer-box">
-      <textarea id="chatInput" rows="1" placeholder="Savolingizni yozing…"
-                {% if not ai_ready %}disabled{% endif %}></textarea>
-      <button class="send-btn" type="button" id="chatSend" title="Yuborish" aria-label="Yuborish"
-              {% if not ai_ready %}disabled{% endif %}>
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"
-             stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M12 19V5"/><path d="M5 12l7-7 7 7"/>
-        </svg>
-      </button>
+      <div class="composer-box" id="composerBox">
+        <input type="file" id="chatFile" hidden accept=".jpg,.jpeg,.png,.webp,.pdf,.xlsx,.csv">
+        <button class="attach-btn" type="button" id="chatAttach" title="Nakladnoy biriktirish"
+                aria-label="Fayl biriktirish" {% if not ai_ready %}disabled{% endif %}>
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21.4 11.1l-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5"/>
+          </svg>
+        </button>
+        <textarea id="chatInput" rows="1" placeholder="Savolingizni yozing yoki / buyruq…"
+                  {% if not ai_ready %}disabled{% endif %}></textarea>
+        <button class="send-btn" type="button" id="chatSend" title="Yuborish" aria-label="Yuborish"
+                {% if not ai_ready %}disabled{% endif %}>
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"
+               stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 19V5"/><path d="M5 12l7-7 7 7"/>
+          </svg>
+        </button>
+      </div>
+      <p class="chat-note">
+        Model: {{ model_name }} · AI xato qilishi mumkin, muhim raqamlarni
+        <a href="{% url 'reports' %}">hisobotlardan</a> tekshiring.
+      </p>
     </div>
-    <p class="chat-note">
-      Model: {{ model_name }} · AI xato qilishi mumkin, muhim raqamlarni
-      <a href="{% url 'reports' %}">hisobotlardan</a> tekshiring.
-    </p>
   </div>
 
 </div>
 
-<span id="chat-config" data-send="{% url 'chat_send' %}" data-reset="{% url 'chat_reset' %}" hidden></span>
+{{ history|json_script:"chat-history" }}
+<span id="chat-config"
+      data-send="{% url 'chat_send' %}"
+      data-conversation="{{ conversation.pk|default:'' }}" hidden></span>
 {% endblock %}
 
 {% block scripts %}

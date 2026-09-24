@@ -1097,3 +1097,361 @@ class ImageCompressionTests(BaseDataMixin, TestCase):
         product = self._make(buffer.getvalue(), "burilgan.jpg")
         with Image.open(product.image.path) as result:
             self.assertEqual(result.size, (200, 400))
+
+
+# ---------------------------------------------------------------------------
+# Nakladnoylar: qabul va sotuv
+# ---------------------------------------------------------------------------
+
+from unittest import mock
+
+from . import analysis, documents
+from .models import Supplier, Waybill, WaybillItem
+from .services import WaybillError, confirm_receipt, confirm_sale
+
+
+class WaybillMixin(SalesMixin):
+    """Nakladnoy testlari: AI chaqirilmaydi — qatorlar to'g'ridan-to'g'ri yaratiladi."""
+
+    def setUp(self):
+        super().setUp()
+        self.director = self.make_director()
+        self.supplier = Supplier.objects.create(company=self.company, name="Textile Trade")
+
+    def waybill(self, kind=Waybill.Kind.QABUL, rows=(), **kwargs):
+        waybill = Waybill.objects.create(
+            branch=self.branch, kind=kind, created_by=self.director, **kwargs
+        )
+        for row in rows:
+            WaybillItem.objects.create(waybill=waybill, **row)
+        return waybill
+
+
+class ReceiptTests(WaybillMixin, TestCase):
+    def test_confirm_increases_stock_and_updates_cost(self):
+        waybill = self.waybill(rows=[
+            {"product": self.non, "name": "Non", "quantity": Decimal("10"), "price": Decimal("2500")},
+        ])
+        confirm_receipt(waybill, self.director)
+
+        self.non.refresh_from_db()
+        self.assertEqual(self.non.quantity, Decimal("60"))
+        self.assertEqual(self.non.cost_price, Decimal("2500"))
+        movement = StockMovement.objects.get(product=self.non, kind=StockMovement.Kind.KIRIM)
+        self.assertEqual(movement.quantity, Decimal("10"))
+        waybill.refresh_from_db()
+        self.assertEqual(waybill.status, Waybill.Status.TASDIQLANGAN)
+        self.assertEqual(waybill.confirmed_by, self.director)
+
+    def test_unmatched_row_creates_product(self):
+        waybill = self.waybill(rows=[
+            {"name": "Shapka qishki", "unit": "dona", "quantity": Decimal("6"),
+             "price": Decimal("45000"), "sale_price": Decimal("65000")},
+        ])
+        confirm_receipt(waybill, self.director)
+
+        product = Product.objects.get(branch=self.branch, name="Shapka qishki")
+        self.assertEqual(product.quantity, Decimal("6"))
+        self.assertEqual(product.cost_price, Decimal("45000"))
+        self.assertEqual(product.price, Decimal("65000"))
+        self.assertEqual(waybill.items.get().product, product)
+
+    def test_unmatched_row_without_sale_price_changes_nothing(self):
+        waybill = self.waybill(rows=[
+            {"product": self.non, "name": "Non", "quantity": Decimal("10"), "price": Decimal("2500")},
+            {"name": "Noma'lum tovar", "quantity": Decimal("3"), "price": Decimal("1000")},
+        ])
+        with self.assertRaises(WaybillError):
+            confirm_receipt(waybill, self.director)
+
+        # Birinchi qator ham qo'llanmagan — hammasi yoki hech narsa.
+        self.non.refresh_from_db()
+        self.assertEqual(self.non.quantity, Decimal("50"))
+        waybill.refresh_from_db()
+        self.assertEqual(waybill.status, Waybill.Status.QORALAMA)
+
+    def test_on_credit_adds_supplier_debt(self):
+        waybill = self.waybill(supplier=self.supplier, on_credit=True, rows=[
+            {"product": self.sut, "name": "Sut", "quantity": Decimal("5"), "price": Decimal("8000")},
+        ])
+        confirm_receipt(waybill, self.director)
+        self.supplier.refresh_from_db()
+        self.assertEqual(self.supplier.debt, Decimal("40000"))
+
+    def test_on_credit_requires_supplier(self):
+        waybill = self.waybill(on_credit=True, rows=[
+            {"product": self.sut, "name": "Sut", "quantity": Decimal("5"), "price": Decimal("8000")},
+        ])
+        with self.assertRaises(WaybillError):
+            confirm_receipt(waybill, self.director)
+        self.sut.refresh_from_db()
+        self.assertEqual(self.sut.quantity, Decimal("20"))
+
+    def test_cannot_confirm_twice(self):
+        waybill = self.waybill(rows=[
+            {"product": self.non, "name": "Non", "quantity": Decimal("1"), "price": Decimal("2000")},
+        ])
+        confirm_receipt(waybill, self.director)
+        with self.assertRaises(WaybillError):
+            confirm_receipt(waybill, self.director)
+        self.non.refresh_from_db()
+        self.assertEqual(self.non.quantity, Decimal("51"))
+
+    def test_foreign_branch_product_rejected(self):
+        waybill = self.waybill(rows=[
+            {"product": self.boshqa, "name": "Shakar", "quantity": Decimal("1"), "price": Decimal("9000")},
+        ])
+        with self.assertRaises(WaybillError):
+            confirm_receipt(waybill, self.director)
+
+
+class WaybillSaleTests(WaybillMixin, TestCase):
+    def test_confirm_creates_sale_through_checkout(self):
+        waybill = self.waybill(kind=Waybill.Kind.SOTUV, rows=[
+            {"product": self.non, "name": "Non", "quantity": Decimal("5"), "price": Decimal("3800")},
+            {"product": self.sut, "name": "Sut", "quantity": Decimal("2"), "price": Decimal("0")},
+        ])
+        confirm_sale(waybill, self.cashier, payment_method=PaymentMethod.OTKAZMA)
+
+        waybill.refresh_from_db()
+        sale = waybill.sale
+        self.assertEqual(waybill.status, Waybill.Status.TASDIQLANGAN)
+        # Narx 0 bo'lsa — mahsulotning joriy narxi olinadi.
+        self.assertEqual(sale.total, Decimal("5") * Decimal("3800") + Decimal("2") * Decimal("12000"))
+        self.non.refresh_from_db()
+        self.assertEqual(self.non.quantity, Decimal("45"))
+
+    def test_unmatched_row_blocks_sale(self):
+        waybill = self.waybill(kind=Waybill.Kind.SOTUV, rows=[
+            {"name": "Noma'lum", "quantity": Decimal("1"), "price": Decimal("1000")},
+        ])
+        with self.assertRaises(WaybillError):
+            confirm_sale(waybill, self.cashier, payment_method=PaymentMethod.NAQD)
+        self.assertEqual(Sale.objects.count(), 0)
+
+    def test_insufficient_stock_keeps_draft(self):
+        waybill = self.waybill(kind=Waybill.Kind.SOTUV, rows=[
+            {"product": self.sut, "name": "Sut", "quantity": Decimal("999"), "price": Decimal("12000")},
+        ])
+        with self.assertRaises(WaybillError):
+            confirm_sale(waybill, self.cashier, payment_method=PaymentMethod.KARTA)
+        waybill.refresh_from_db()
+        self.assertEqual(waybill.status, Waybill.Status.QORALAMA)
+        self.assertIsNone(waybill.sale)
+
+    def test_debt_sale_requires_customer(self):
+        waybill = self.waybill(kind=Waybill.Kind.SOTUV, rows=[
+            {"product": self.non, "name": "Non", "quantity": Decimal("1"), "price": Decimal("4000")},
+        ])
+        with self.assertRaises(WaybillError):
+            confirm_sale(waybill, self.cashier, payment_method=PaymentMethod.QARZ)
+
+
+class WaybillViewTests(WaybillMixin, TestCase):
+    def form_data(self, waybill, action, **overrides):
+        """Tahrirlash formasi — sahifada qanday yuborilsa shunday."""
+        items = list(waybill.items.all())
+        data = {
+            "action": action,
+            "number": waybill.number,
+            "doc_date": "",
+            "note": "",
+            "items-TOTAL_FORMS": str(len(items)),
+            "items-INITIAL_FORMS": str(len(items)),
+            "items-MIN_NUM_FORMS": "0",
+            "items-MAX_NUM_FORMS": "1000",
+        }
+        if waybill.kind == Waybill.Kind.SOTUV:
+            data["customer"] = ""
+            data["payment_method"] = str(PaymentMethod.KARTA)
+        else:
+            data["supplier"] = ""
+        for index, item in enumerate(items):
+            prefix = f"items-{index}-"
+            data.update({
+                prefix + "id": str(item.pk),
+                prefix + "product": str(item.product_id or ""),
+                prefix + "name": item.name,
+                prefix + "barcode": item.barcode,
+                prefix + "unit": item.unit,
+                prefix + "quantity": str(item.quantity),
+                prefix + "price": str(item.price),
+                prefix + "sale_price": str(item.sale_price or ""),
+            })
+        data.update(overrides)
+        return data
+
+    def test_confirm_from_page_with_edited_quantity(self):
+        waybill = self.waybill(rows=[
+            {"product": self.non, "name": "Non", "quantity": Decimal("10"), "price": Decimal("2000")},
+        ])
+        self.client.force_login(self.director)
+        url = reverse("waybill_detail", args=[waybill.pk])
+        # Foydalanuvchi AI o'qigan sonni tuzatadi: 10 → 12.
+        response = self.client.post(url, self.form_data(waybill, "confirm", **{"items-0-quantity": "12"}))
+        self.assertRedirects(response, url)
+        self.non.refresh_from_db()
+        self.assertEqual(self.non.quantity, Decimal("62"))
+
+    def test_cancel_does_not_touch_stock(self):
+        waybill = self.waybill(rows=[
+            {"product": self.non, "name": "Non", "quantity": Decimal("10"), "price": Decimal("2000")},
+        ])
+        self.client.force_login(self.director)
+        self.client.post(reverse("waybill_detail", args=[waybill.pk]), {"action": "cancel"})
+        waybill.refresh_from_db()
+        self.assertEqual(waybill.status, Waybill.Status.BEKOR)
+        self.non.refresh_from_db()
+        self.assertEqual(self.non.quantity, Decimal("50"))
+
+    def test_sale_waybill_redirects_to_sale(self):
+        waybill = self.waybill(kind=Waybill.Kind.SOTUV, rows=[
+            {"product": self.non, "name": "Non", "quantity": Decimal("2"), "price": Decimal("4000")},
+        ])
+        self.client.force_login(self.director)
+        response = self.client.post(
+            reverse("waybill_detail", args=[waybill.pk]), self.form_data(waybill, "confirm")
+        )
+        waybill.refresh_from_db()
+        self.assertRedirects(response, reverse("sale_detail", args=[waybill.sale.pk]))
+
+    def test_cashier_cannot_open_receipt(self):
+        waybill = self.waybill(rows=[
+            {"product": self.non, "name": "Non", "quantity": Decimal("1"), "price": Decimal("2000")},
+        ])
+        self.client.force_login(self.cashier)
+        response = self.client.get(reverse("waybill_detail", args=[waybill.pk]))
+        self.assertRedirects(response, reverse("waybill_list"))
+
+    def test_supplier_pages_need_receive_right(self):
+        self.client.force_login(self.cashier)
+        self.assertEqual(self.client.get(reverse("supplier_list")).status_code, 302)
+        self.client.force_login(self.director)
+        self.assertEqual(self.client.get(reverse("supplier_list")).status_code, 200)
+
+
+@override_settings(MEDIA_ROOT=tempfile.mkdtemp())
+class WaybillUploadTests(WaybillMixin, TestCase):
+    """Yuklash: AI chaqiruvi `parse_waybill` darajasida almashtiriladi."""
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(settings.MEDIA_ROOT, ignore_errors=True)
+        super().tearDownClass()
+
+    def fake_parse(self, waybill):
+        waybill.number = "145"
+        waybill.supplier_name = '"Textile Trade" MChJ'
+        waybill.save()
+        WaybillItem.objects.create(
+            waybill=waybill, product=self.non, name="Non", quantity=Decimal("3"),
+            price=Decimal("2000"), matched_by=WaybillItem.Match.NOM,
+        )
+        return {"items": 1, "matched": 1, "warnings": []}
+
+    def upload(self, name="n.png", content=b"fake"):
+        return SimpleUploadedFile(name, content, content_type="image/png")
+
+    def test_page_upload_creates_draft_and_guesses_supplier(self):
+        self.client.force_login(self.director)
+        with mock.patch.object(documents, "parse_waybill", side_effect=self.fake_parse):
+            response = self.client.post(reverse("waybill_upload"), {"kind": 1, "file": self.upload()})
+
+        waybill = Waybill.objects.get()
+        self.assertRedirects(response, reverse("waybill_detail", args=[waybill.pk]))
+        self.assertEqual(waybill.status, Waybill.Status.QORALAMA)
+        # Qo'shtirnoq va "MChJ" olib tashlanib solishtiriladi.
+        self.assertEqual(waybill.supplier, self.supplier)
+        self.non.refresh_from_db()
+        self.assertEqual(self.non.quantity, Decimal("50"))
+
+    def test_wrong_file_type_rejected(self):
+        self.client.force_login(self.director)
+        self.client.post(reverse("waybill_upload"), {
+            "kind": 1, "file": SimpleUploadedFile("x.exe", b"MZ", content_type="application/octet-stream"),
+        })
+        self.assertEqual(Waybill.objects.count(), 0)
+
+    def test_chat_command_returns_review_link(self):
+        self.client.force_login(self.director)
+        with mock.patch.object(documents, "parse_waybill", side_effect=self.fake_parse):
+            response = self.client.post(reverse("chat_send"), {
+                "message": "/qabul", "file": self.upload(),
+            })
+        data = response.json()
+        waybill = Waybill.objects.get()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(data["tables"][0]["havola"], reverse("waybill_detail", args=[waybill.pk]))
+        self.assertIn("tasdiqlang", data["reply"])
+
+    def test_chat_command_without_file(self):
+        self.client.force_login(self.director)
+        response = self.client.post(
+            reverse("chat_send"), json.dumps({"message": "/qabul"}), content_type="application/json"
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("faylini biriktiring", response.json()["error"])
+
+    def test_cashier_cannot_receive_via_chat(self):
+        self.client.force_login(self.cashier)
+        with mock.patch.object(documents, "parse_waybill", side_effect=self.fake_parse):
+            response = self.client.post(reverse("chat_send"), {"message": "/qabul", "file": self.upload()})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(Waybill.objects.count(), 0)
+
+
+class DocumentHelperTests(TestCase):
+    """AI'siz ishlaydigan yordamchilar: narx hisobi va birliklar."""
+
+    def item(self, **kwargs):
+        return documents.ParsedItem(name="Tovar", **kwargs)
+
+    def test_price_from_total(self):
+        price, warning = documents._prices(self.item(quantity=4, total=1000000))
+        self.assertEqual(price, Decimal("250000.00"))
+        self.assertIsNone(warning)
+
+    def test_mismatch_is_reported(self):
+        price, warning = documents._prices(self.item(quantity=4, price=250000, total=900000))
+        self.assertEqual(price, Decimal("250000.00"))
+        self.assertIn("900000", warning)
+
+    def test_rounding_difference_ignored(self):
+        _, warning = documents._prices(self.item(quantity=3, price=333.33, total=1000))
+        self.assertIsNone(warning)
+
+    def test_units_normalized(self):
+        self.assertEqual(documents._unit("шт."), "dona")
+        self.assertEqual(documents._unit("КГ"), "kg")
+
+
+class AnalysisSandboxTests(TestCase):
+    """Model yozgan kodni tekshirish — API'siz."""
+
+    def frame(self):
+        import pandas as pd
+        return pd.DataFrame({"mahsulot": ["A", "B", "A"], "tushum": [10.0, 20.0, 5.0]})
+
+    def test_clean_code_runs(self):
+        code = "def javob(df):\n    return df.groupby('mahsulot')['tushum'].sum()"
+        shaped, table = analysis.shape(analysis.run(code, self.frame()))
+        self.assertEqual(shaped["ustunlar"], ["mahsulot", "tushum"])
+        self.assertIsNone(table)
+
+    def test_dangerous_code_rejected(self):
+        cases = [
+            "import os\ndef javob(df):\n    return 1",
+            "def javob(df):\n    return df.__class__",
+            "def javob(df):\n    return df.to_csv('/tmp/x')",
+            "def javob(df):\n    return open('/etc/passwd').read()",
+            "def javob(df):\n    while True:\n        pass",
+        ]
+        for code in cases:
+            with self.subTest(code=code.splitlines()[-1]):
+                with self.assertRaises(analysis.UnsafeCode):
+                    analysis.run(code, self.frame())
+
+    def test_groupby_index_kept_as_column(self):
+        code = "def javob(df):\n    return df.groupby('mahsulot').agg({'tushum': 'sum'})"
+        shaped, _ = analysis.shape(analysis.run(code, self.frame()))
+        self.assertIn("mahsulot", shaped["ustunlar"])

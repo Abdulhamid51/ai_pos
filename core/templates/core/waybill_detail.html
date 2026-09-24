@@ -1,0 +1,192 @@
+{% extends "base.html" %}
+{% load humanize static %}
+
+{% block title %}{{ waybill }} · AI POS{% endblock %}
+
+{% block head %}<link rel="stylesheet" href="{% static 'css/waybill.css' %}">{% endblock %}
+
+{% block topbar_extra %}
+  <span class="wb-status s{{ waybill.status }}">{{ waybill.get_status_display }}</span>
+  <a class="btn" href="{% url 'waybill_list' %}?tur={% if waybill.kind == 2 %}sotuv{% else %}qabul{% endif %}">← Nakladnoylar</a>
+{% endblock %}
+
+{% block content %}
+
+{% if editable %}
+<form method="post" id="wbForm" novalidate>
+  {% csrf_token %}
+  {{ formset.management_form }}
+
+  <div class="wb-stack">
+
+    <!-- Hujjat sarlavhasi -->
+    <div class="card">
+      <div class="card-head">
+        <h2>{{ waybill.get_kind_display }} nakladnoyi</h2>
+        <span class="sub">AI o'qigan qiymatlarni tekshiring, kerak bo'lsa tuzating — tasdiqlaguningizcha qoldiqqa tegilmaydi</span>
+      </div>
+      <div class="card-body">
+        {% if header.non_field_errors %}<div class="alert danger">{{ header.non_field_errors }}</div>{% endif %}
+        <div class="wb-head-grid">
+          {% for f in header %}
+            {% if f.name == "on_credit" %}
+              <div class="check-row wb-check"><label>{{ f }} {{ f.label }}</label></div>
+            {% else %}
+              <div class="field">
+                <label for="{{ f.id_for_label }}">{{ f.label }}</label>
+                {{ f }}
+                {% if f.errors %}<div class="field-error">{{ f.errors|striptags }}</div>{% endif %}
+              </div>
+            {% endif %}
+          {% endfor %}
+          {% if sale_form %}
+            {% for f in sale_form %}
+              <div class="field">
+                <label for="{{ f.id_for_label }}">{{ f.label }}</label>
+                {{ f }}
+                {% if f.errors %}<div class="field-error">{{ f.errors|striptags }}</div>{% endif %}
+              </div>
+            {% endfor %}
+          {% endif %}
+        </div>
+        {% if waybill.kind == 1 and waybill.supplier_name and not waybill.supplier %}
+          <div class="muted wb-hint">
+            Hujjatda ta'minotchi: «{{ waybill.supplier_name }}» — ro'yxatda topilmadi.
+            <a href="{% url 'supplier_create' %}?nom={{ waybill.supplier_name|urlencode }}&amp;qaytish={{ request.path|urlencode }}">Ta'minotchi sifatida qo'shish</a>
+          </div>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Qatorlar -->
+    <div class="card">
+      <div class="card-head"><h2>Qatorlar</h2><span class="sub">{{ items|length }} ta</span></div>
+
+      {% if formset.non_form_errors %}<div class="alert danger" style="margin:0 16px">{{ formset.non_form_errors }}</div>{% endif %}
+
+      <div class="table-wrap">
+        <table class="data wb-items">
+          <thead>
+            <tr>
+              <th>Hujjatdagi nomi</th>
+              <th>Bazadagi mahsulot</th>
+              <th class="num">Soni</th>
+              <th>Birlik</th>
+              <th class="num">{% if waybill.kind == 1 %}Tan narxi{% else %}Narxi{% endif %}</th>
+              {% if waybill.kind == 1 %}<th class="num">Sotuv narxi</th>{% endif %}
+              <th class="num">Jami</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="wbRows">
+            {% for form in formset %}
+              {% include "core/partials/waybill_row.html" with form=form kind=waybill.kind %}
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <template id="wbEmptyRow">
+        {% include "core/partials/waybill_row.html" with form=formset.empty_form kind=waybill.kind %}
+      </template>
+
+      <div class="card-body wb-foot">
+        <button class="btn btn-sm" type="button" id="wbAddRow">+ Qator qo'shish</button>
+        <span class="muted">
+          {% if waybill.kind == 1 %}
+            Mahsulot tanlanmagan qator uchun <b>yangi mahsulot</b> yaratiladi — sotuv narxini kiriting.
+          {% else %}
+            Sotuvda barcha qatorlar bazadagi mahsulotga bog'langan bo'lishi kerak.
+          {% endif %}
+        </span>
+      </div>
+    </div>
+
+    <!-- Jami va amallar -->
+    <div class="wb-bottom">
+      <div class="card">
+        <div class="card-body wb-summary">
+          <div class="sum-list">
+            <div><span>Qatorlar</span><span>{{ items|length }}</span></div>
+            {% if unmatched %}
+              <div class="danger-row"><span>{% if waybill.kind == 1 %}Yangi mahsulot bo'ladi{% else %}Bazada topilmadi{% endif %}</span><span>{{ unmatched }}</span></div>
+            {% endif %}
+            <div class="total"><span>Jami</span><span id="wbTotal">{{ total|floatformat:0|intcomma }} {{ currency }}</span></div>
+          </div>
+          <div class="wb-actions">
+            <button class="btn btn-danger" type="submit" name="action" value="cancel" id="wbCancel">Bekor qilish</button>
+            <button class="btn" type="submit" name="action" value="save">Saqlash</button>
+            <button class="btn btn-primary" type="submit" name="action" value="confirm" id="wbConfirm">
+              {% if waybill.kind == 1 %}Qabulni tasdiqlash{% else %}Sotuvni tasdiqlash{% endif %}
+            </button>
+          </div>
+        </div>
+      </div>
+      {% include "core/partials/waybill_source.html" %}
+    </div>
+
+  </div>
+</form>
+
+{% else %}
+
+<!-- Tasdiqlangan yoki bekor qilingan — faqat o'qish -->
+<div class="wb-layout">
+  <div class="card">
+    <div class="card-head">
+      <h2>{{ waybill.get_kind_display }} nakladnoyi</h2>
+      <span class="sub">{{ waybill.get_status_display|lower }}</span>
+    </div>
+    <div class="table-wrap">
+      <table class="data">
+        <thead>
+          <tr><th>Hujjatdagi nomi</th><th>Mahsulot</th><th class="num">Soni</th>
+              <th class="num">Narxi</th><th class="num">Jami</th></tr>
+        </thead>
+        <tbody>
+          {% for item in items %}
+            <tr>
+              <td>{{ item.name }}{% if item.barcode %}<div class="muted"><code>{{ item.barcode }}</code></div>{% endif %}</td>
+              <td>{% if item.product %}<a href="{% url 'product_edit' item.product.pk %}">{{ item.product }}</a>{% else %}<span class="muted">—</span>{% endif %}</td>
+              <td class="num">{{ item.quantity|floatformat:"-3" }} {{ item.unit }}</td>
+              <td class="num">{{ item.price|floatformat:0|intcomma }}</td>
+              <td class="num">{{ item.line_total|floatformat:0|intcomma }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="card-body">
+      <div class="sum-list">
+        <div class="total"><span>Jami</span><span>{{ total|floatformat:0|intcomma }} {{ currency }}</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="wb-side">
+    <div class="card">
+      <div class="card-head"><h2>Hujjat</h2></div>
+      <div class="card-body">
+        <div class="info-list">
+          <div><span>Raqami</span><span>{{ waybill.number|default:"—" }}</span></div>
+          <div><span>Sanasi</span><span>{{ waybill.doc_date|date:"d.m.Y"|default:"—" }}</span></div>
+          <div><span>Filial</span><span>{{ waybill.branch.name }}</span></div>
+          {% if waybill.supplier %}<div><span>Ta'minotchi</span><span><a href="{% url 'supplier_detail' waybill.supplier.pk %}">{{ waybill.supplier }}</a></span></div>{% endif %}
+          {% if waybill.customer %}<div><span>Mijoz</span><span>{{ waybill.customer.full_name }}</span></div>{% endif %}
+          {% if waybill.on_credit %}<div><span>To'lov</span><span>qarzga</span></div>{% endif %}
+          {% if waybill.sale %}<div><span>Chek</span><span><a href="{% url 'sale_detail' waybill.sale.pk %}">№{{ waybill.sale.number }}</a></span></div>{% endif %}
+          <div><span>Yukladi</span><span>{{ waybill.created_by|default:"—" }}</span></div>
+          {% if waybill.confirmed_at %}<div><span>Tasdiqladi</span><span>{{ waybill.confirmed_by }} · {{ waybill.confirmed_at|date:"d.m.Y H:i" }}</span></div>{% endif %}
+        </div>
+      </div>
+    </div>
+    {% include "core/partials/waybill_source.html" %}
+  </div>
+</div>
+
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if editable %}<script src="{% static 'js/waybill.js' %}"></script>{% endif %}
+{% endblock %}
